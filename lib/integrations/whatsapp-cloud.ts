@@ -57,6 +57,7 @@ export type WhatsAppInboundMessage = {
   mediaId: string | null;
   mimeType: string | null;
   caption: string | null;
+  providerOccurredAt: string | null;
 };
 
 /**
@@ -90,7 +91,10 @@ export function parseWhatsAppCloudInbound(body: unknown): WhatsAppInboundMessage
       const messageId = typeof id === "string" ? id : "";
       const type = typeof m.type === "string" ? m.type : "text";
 
-      const base = { fromWaId: from, phoneNumberId, displayPhoneNumber, messageId, contactName };
+      const providerOccurredAt = typeof m.timestamp === "string" && /^\d{9,13}$/.test(m.timestamp)
+        ? new Date(Number(m.timestamp) * (m.timestamp.length > 10 ? 1 : 1000)).toISOString()
+        : null;
+      const base = { fromWaId: from, phoneNumberId, displayPhoneNumber, messageId, contactName, providerOccurredAt };
 
       if (type === "text") {
         const textObj = m.text as { body?: string } | undefined;

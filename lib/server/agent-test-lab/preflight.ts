@@ -6,6 +6,7 @@ import { LAB_OWNER_ID, labOnlyExpectsSilence, labPhoneJid, labRuleMatches, isLab
 import { inspectLabIsolatedAgent } from "./isolation";
 import { hasApprovedLabCI } from "./github";
 import { labSafetyChecks } from "@/lib/agent-test-lab/safety-policy";
+import { inspectLabReceiver } from "./receiver";
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
@@ -20,11 +21,12 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
   check("deployment_known", /^[a-f0-9]{40}$/.test(sha), "A versão publicada precisa ser identificada.");
   let senderJid: string | null = null, senderConnectionId: string | null = null;
   const effective = { tenantId: input.tenantId, agentId: input.agentId, connectionId: input.connectionId, ruleId: input.ruleId };
+  let effectiveChannel: "evolution" | "meta_cloud" = input.channel;
   let isolated: Awaited<ReturnType<typeof inspectLabIsolatedAgent>> = null;
   if (isLabInternalMode(input.mode)) {
     check("github_configured", Boolean(process.env.AGENT_TEST_LAB_GITHUB_TOKEN), "Runner do GitHub configurado com acesso restrito.");
     return { checks, sha, configHash: labFingerprint({ mode: input.mode }), scenarioHash: labFingerprint(input.scenario),
-      targetJid: null, senderJid, senderConnectionId, agent: null, effective, isolatedAgentId: null };
+      targetJid: null, senderJid, senderConnectionId, agent: null, effective, effectiveChannel, isolatedAgentId: null };
   }
   // "Isolated copy" must aim at the copy, not at the customer's agent. Resolving the
   // effective target here means every check below — connection, rule, numbers — is
@@ -36,15 +38,18 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
     if (isolated) {
       Object.assign(effective, { tenantId: isolated.labTenantId, agentId: isolated.labAgentId, connectionId: null, ruleId: null });
       if (LAB_REAL_MODES.has(input.mode)) {
-      const routed = await sb.from("tenant_evolution_instances").select("id").eq("tenant_id", isolated.labTenantId).maybeSingle();
-      if (routed.error) throw new Error("isolated_routing_read_failed");
+      const receiver = await inspectLabReceiver();
       const rule = await sb.from("lead_distribution_rules").select("id")
         .eq("tenant_id", isolated.labTenantId).eq("source", "whatsapp_organico").eq("active", true).maybeSingle();
       if (rule.error) throw new Error("isolated_rule_read_failed");
-      check("isolated_copy_routed", Boolean(routed.data && rule.data), "A cópia isolada ainda não tem conexão e regra próprias.");
+      const receiverMatches = receiver?.state === "open" && receiver.labTenantId === isolated.labTenantId
+        && receiver.labAgentId === isolated.labAgentId && Boolean(receiver.connectionId)
+        && (receiver.provider === "evolution" || receiver.provider === "meta_cloud");
+      check("isolated_copy_routed", Boolean(receiverMatches && rule.data), "A cópia isolada ainda não tem conexão e regra próprias.");
+      if (receiverMatches) effectiveChannel = receiver!.provider as "evolution" | "meta_cloud";
       Object.assign(effective, {
         tenantId: isolated.labTenantId, agentId: isolated.labAgentId,
-        connectionId: routed.data?.id ? String(routed.data.id) : null,
+        connectionId: receiverMatches ? String(receiver!.connectionId) : null,
         ruleId: rule.data?.id ? String(rule.data.id) : null,
       });
       for (const dependency of isolated.unavailable) {
@@ -59,22 +64,23 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
   if (error) throw new Error("target_read_failed");
   check("agent_active", Boolean(agent?.active && !agent.archived_at), "O agente precisa existir e estar ativo.");
   if (!agent) return { checks, sha, configHash: "", scenarioHash: labFingerprint(input.scenario),
-    targetJid: null, senderJid, senderConnectionId, agent: null, effective, isolatedAgentId: isolated?.id ?? null };
+    targetJid: null, senderJid, senderConnectionId, agent: null, effective, effectiveChannel, isolatedAgentId: isolated?.id ?? null };
   let targetJid: string | null = null;
   if (LAB_REAL_MODES.has(input.mode)) {
-    const table = input.channel === "evolution" ? "tenant_evolution_instances" : "whatsapp_cloud_connections";
-    const selected = input.channel === "evolution" ? "id,wa_jid,connection_state" : "id,display_phone,active";
-    const connection = await sb.from(table).select(selected).eq("tenant_id", effective.tenantId).eq("id", effective.connectionId ?? "00000000-0000-0000-0000-000000000000").maybeSingle();
+    const table = effectiveChannel === "evolution" ? "tenant_evolution_instances" : "whatsapp_cloud_connections";
+    const selected = effectiveChannel === "evolution" ? "id,wa_jid,connection_state" : "phone_number_id,display_phone,active";
+    const connection = await sb.from(table).select(selected).eq("tenant_id", effective.tenantId)
+      .eq(effectiveChannel === "evolution" ? "id" : "phone_number_id", effective.connectionId ?? "missing").maybeSingle();
     if (connection.error) throw new Error("connection_read_failed");
     const row = connection.data as unknown as Record<string, unknown> | null;
     targetJid = labPhoneJid(row?.wa_jid ?? row?.display_phone);
-    check("connection_exact", Boolean(row && targetJid && (input.channel === "evolution" ? row.connection_state === "open" : row.active === true)), "Conexão ativa e número exatos pertencentes ao tenant.");
+    check("connection_exact", Boolean(row && targetJid && (effectiveChannel === "evolution" ? row.connection_state === "open" : row.active === true)), "Conexão ativa e número exatos pertencentes ao tenant.");
     const { data: rule, error: ruleError } = await sb.from("lead_distribution_rules")
       .select("id,active,source,agent_ids,connection_id,transport,included_form_ids,excluded_form_ids,use_all_forms,page_id")
       .eq("tenant_id", effective.tenantId).eq("id", effective.ruleId ?? "00000000-0000-0000-0000-000000000000").maybeSingle();
     if (ruleError) throw new Error("rule_read_failed");
     const intentionalSilence = labOnlyExpectsSilence(input);
-    check("rule_exact", intentionalSilence || labRuleMatches({ ...input, ...effective }, rule),
+    check("rule_exact", intentionalSilence || labRuleMatches({ ...input, ...effective, channel: effectiveChannel }, rule),
       intentionalSilence ? "Sem regra: somente silêncio é esperado." : "O teste não pode forçar uma regra ou agente diferente.");
     check("effects_confirmed", input.targetKind === "copy" || input.originalConfirmed, "Efeitos reais precisam ser confirmados nesta execução.");
     // The plan requires the internal suites to have passed on this exact commit
@@ -99,5 +105,5 @@ export async function inspectLabTarget(input: LabRunRequestV1) {
     }
   }
   return { checks, sha, configHash: labFingerprint(agent), scenarioHash: labFingerprint(input.scenario),
-    targetJid, senderJid, senderConnectionId, agent, effective, isolatedAgentId: isolated?.id ?? null };
+    targetJid, senderJid, senderConnectionId, agent, effective, effectiveChannel, isolatedAgentId: isolated?.id ?? null };
 }

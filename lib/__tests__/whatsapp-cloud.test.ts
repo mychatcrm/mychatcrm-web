@@ -62,8 +62,8 @@ describe("parseWhatsAppCloudInbound", () => {
   });
 
   it("parses inbound text", () => {
-    const r = parseWhatsAppCloudInbound(wrap({ type: "text", from: "5562999999999", id: "wamid.t", text: { body: "Oi" } }));
-    expect(r).toMatchObject({ kind: "text", text: "Oi", phoneNumberId: "PN999", mediaId: null });
+    const r = parseWhatsAppCloudInbound(wrap({ type: "text", from: "5562999999999", id: "wamid.t", timestamp: "1789390800", text: { body: "Oi" } }));
+    expect(r).toMatchObject({ kind: "text", text: "Oi", phoneNumberId: "PN999", mediaId: null, providerOccurredAt: "2026-09-14T13:00:00.000Z" });
   });
 
   it("parses inbound audio with media id", () => {

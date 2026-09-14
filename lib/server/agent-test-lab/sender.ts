@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionSendText, evolutionSendMedia, evolutionSendAudio, evolutionWaitForMessageStatus, jidToDigits } from "@/lib/integrations/evolution-api";
 import { extractEvolutionSendReceipt } from "@/lib/integrations/evolution-message-receipt";
+import { sendWhatsAppMediaMessage, sendWhatsAppTextMessage } from "@/lib/integrations/whatsapp-cloud";
 import { LAB_INSTANCE_PREFIX, LAB_OWNER_ID, labPhoneJid } from "@/lib/agent-test-lab/policy";
 import { getLabSender } from "./connections";
 import { signLabAsset } from "./assets-store";
@@ -10,6 +11,14 @@ export type LabDispatch =
   | { outcome: "confirmed"; providerMessageId: string; deliveryStatus: string | null }
   | { outcome: "inconclusive"; code: string; providerMessageId: string | null }
   | { outcome: "rejected"; code: string };
+
+function validSenderIdentity(sender: { provider?: string; instance_name: string }): boolean {
+  return sender.provider === "evolution"
+    ? sender.instance_name.startsWith(LAB_INSTANCE_PREFIX)
+    : sender.provider === "meta_cloud"
+      ? sender.instance_name.startsWith("mychatcrm-lab-meta-sender-")
+      : false;
+}
 
 /**
  * The destination is re-read from the authorized catalogue immediately before the
@@ -31,7 +40,8 @@ export async function assertLabDestinationAuthorized(params: {
   const evolution = params.channel === "evolution";
   const connection = await sb.from(evolution ? "tenant_evolution_instances" : "whatsapp_cloud_connections")
     .select(evolution ? "wa_jid,connection_state" : "display_phone,active")
-    .eq("tenant_id", params.tenantId).eq("id", params.connectionId).maybeSingle();
+    .eq("tenant_id", params.tenantId)
+    .eq(evolution ? "id" : "phone_number_id", params.connectionId).maybeSingle();
   if (connection.error) throw new Error("destination_connection_read_failed");
   const row = connection.data as Record<string, unknown> | null;
   return Boolean(row && labPhoneJid(evolution ? row.wa_jid : row.display_phone) === params.targetJid &&
@@ -49,7 +59,7 @@ export async function dispatchLabText(params: {
   if (!params.text.trim() || params.text.length > 4000) return { outcome: "rejected", code: "message_length_invalid" };
   const sender = await getLabSender();
   if (!sender || sender.state !== "open") return { outcome: "rejected", code: "sender_not_connected" };
-  if (!sender.instance_name.startsWith(LAB_INSTANCE_PREFIX)) return { outcome: "rejected", code: "sender_identity_invalid" };
+  if (!validSenderIdentity(sender)) return { outcome: "rejected", code: "sender_identity_invalid" };
 
   const target = labPhoneJid(params.targetJid);
   if (!target) return { outcome: "rejected", code: "target_jid_invalid" };
@@ -58,8 +68,27 @@ export async function dispatchLabText(params: {
     return { outcome: "rejected", code: "destination_not_authorized" };
   }
 
-  let result: Awaited<ReturnType<typeof evolutionSendText>>;
   if (!(await params.authorizeDispatch())) return { outcome: "rejected", code: "dispatch_revoked" };
+  if (sender.provider === "meta_cloud") {
+    if (!sender.phone_number_id || !sender.access_token) return { outcome: "rejected", code: "sender_identity_invalid" };
+    try {
+      const result = await sendWhatsAppTextMessage({
+        toWaId: jidToDigits(target),
+        text: params.text,
+        phoneNumberId: sender.phone_number_id,
+        accessToken: sender.access_token,
+      });
+      if (!result.ok) return result.status >= 400 && result.status < 500
+        ? { outcome: "rejected", code: result.error?.includes("131047") ? "meta_outside_24h_window" : `send_refused_${result.status}` }
+        : { outcome: "inconclusive", code: "send_status_unknown", providerMessageId: null };
+      if (!result.messageId) return { outcome: "inconclusive", code: "receipt_missing", providerMessageId: null };
+      return { outcome: "confirmed", providerMessageId: result.messageId, deliveryStatus: "accepted" };
+    } catch {
+      return { outcome: "inconclusive", code: "send_transport_unknown", providerMessageId: null };
+    }
+  }
+
+  let result: Awaited<ReturnType<typeof evolutionSendText>>;
   try {
     result = await evolutionSendText({
       instanceName: sender.instance_name,
@@ -101,7 +130,7 @@ export async function dispatchLabMedia(params: {
   if ((params.caption?.length ?? 0) > 1000) return { outcome: "rejected", code: "caption_length_invalid" };
   const sender = await getLabSender();
   if (!sender || sender.state !== "open") return { outcome: "rejected", code: "sender_not_connected" };
-  if (!sender.instance_name.startsWith(LAB_INSTANCE_PREFIX)) return { outcome: "rejected", code: "sender_identity_invalid" };
+  if (!validSenderIdentity(sender)) return { outcome: "rejected", code: "sender_identity_invalid" };
   const target = labPhoneJid(params.targetJid);
   if (!target) return { outcome: "rejected", code: "target_jid_invalid" };
   if (labPhoneJid(sender.wa_jid) === target) return { outcome: "rejected", code: "same_number_rejected" };
@@ -113,8 +142,30 @@ export async function dispatchLabMedia(params: {
   try { signed = await signLabAsset(params.assetId); }
   catch { return { outcome: "rejected", code: "asset_unavailable" }; }
 
-  let result: Awaited<ReturnType<typeof evolutionSendMedia>>;
   if (!(await params.authorizeDispatch())) return { outcome: "rejected", code: "dispatch_revoked" };
+  if (sender.provider === "meta_cloud") {
+    if (!sender.phone_number_id || !sender.access_token) return { outcome: "rejected", code: "sender_identity_invalid" };
+    try {
+      const result = await sendWhatsAppMediaMessage({
+        toWaId: jidToDigits(target),
+        kind: signed.asset.kind as "audio" | "image" | "video" | "document",
+        phoneNumberId: sender.phone_number_id,
+        accessToken: sender.access_token,
+        link: signed.url,
+        caption: params.caption ?? "",
+        filename: signed.asset.filename,
+      });
+      if (!result.ok) return result.status >= 400 && result.status < 500
+        ? { outcome: "rejected", code: result.error?.includes("131047") ? "meta_outside_24h_window" : `send_refused_${result.status}` }
+        : { outcome: "inconclusive", code: "send_status_unknown", providerMessageId: null };
+      if (!result.messageId) return { outcome: "inconclusive", code: "receipt_missing", providerMessageId: null };
+      return { outcome: "confirmed", providerMessageId: result.messageId, deliveryStatus: "accepted" };
+    } catch {
+      return { outcome: "inconclusive", code: "send_transport_unknown", providerMessageId: null };
+    }
+  }
+
+  let result: Awaited<ReturnType<typeof evolutionSendMedia>>;
   try {
     result = signed.asset.kind === "audio"
       ? await evolutionSendAudio({ instanceName: sender.instance_name, number: jidToDigits(target), audio: signed.url })

@@ -9,7 +9,7 @@ declare r uuid:=gen_random_uuid(); c uuid:=gen_random_uuid(); sender uuid:=gen_r
 begin
  if has_function_privilege('anon','public.enqueue_agent_test_lab_step_v3(uuid,text,text,jsonb,text,numeric)','EXECUTE')
    or has_function_privilege('authenticated','public.reserve_agent_test_lab_ai_cost_v3(uuid,uuid,text,text,numeric)','EXECUTE')
-   or has_function_privilege('anon','public.authorize_agent_test_lab_inbound_v3(text,uuid,text,text,timestamptz)','EXECUTE') then
+   or has_function_privilege('anon','public.authorize_agent_test_lab_inbound_v3(text,text,text,text,timestamptz)','EXECUTE') then
    raise exception 'rpc_public_access'; end if;
  insert into public.agent_test_lab_isolated_agents(owner_admin_id,lab_tenant_id,lab_agent_id,source_tenant_id,source_agent_id,source_config_hash)
  values(owner,'tenant-lab-v3','lab-a','source','a','hash');
@@ -24,10 +24,10 @@ begin
  '{"targetKind":"copy"}',2,5,now()+interval '20 minutes',token,now()+interval '90 seconds');
  insert into public.agent_test_lab_destinations(owner_admin_id,tenant_id,connection_id,channel,target_jid)
  values(owner,'tenant-lab-v3',c,'evolution',dest);
- if not public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c,'mychatcrm-lab-receiver-fixture',jid,now()) then raise exception 'valid_intake_refused'; end if;
- if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c,'mychatcrm-lab-receiver-fixture','447700900003@s.whatsapp.net',now()) then raise exception 'foreign_contact_imported'; end if;
- if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c,'mychatcrm-lab-receiver-fixture',jid,now()-interval '1 day') then raise exception 'history_imported'; end if;
- if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c,'mychatcrm-lab-receiver-fixture',jid,now()+interval '1 day') then raise exception 'future_imported'; end if;
+ if not public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c::text,'mychatcrm-lab-receiver-fixture',jid,now()) then raise exception 'valid_intake_refused'; end if;
+ if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c::text,'mychatcrm-lab-receiver-fixture','447700900003@s.whatsapp.net',now()) then raise exception 'foreign_contact_imported'; end if;
+ if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c::text,'mychatcrm-lab-receiver-fixture',jid,now()-interval '1 day') then raise exception 'history_imported'; end if;
+ if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c::text,'mychatcrm-lab-receiver-fixture',jid,now()+interval '1 day') then raise exception 'future_imported'; end if;
  update public.agent_test_lab_runs set target_rule_id=rule where id=r;
  insert into public.lead_distribution_rules values(rule,'tenant-lab-v3','evolution');
  insert into public.lead_journeys values(journey,'tenant-lab-v3',jid,'lab-a',rule,c::text,now());
@@ -43,7 +43,7 @@ begin
  -- Customer journeys/outbounds are outside these laboratory-only triggers.
  insert into public.lead_journeys values(gen_random_uuid(),'ordinary-customer',jid,'a',rule,c::text,now());
  insert into public.agent_outbound_outbox values(gen_random_uuid(),'ordinary-customer','a',jid,rule,c::text,'evolution',journey,'authorized','dispatching');
- if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c,'mychatcrm-lab-receiver-fixture',jid,now()) then raise exception 'stopped_intake'; end if;
+ if public.authorize_agent_test_lab_inbound_v3('tenant-lab-v3',c::text,'mychatcrm-lab-receiver-fixture',jid,now()) then raise exception 'stopped_intake'; end if;
  result:=public.reserve_agent_test_lab_ai_cost_v3(r,token,'lab-ai:'||r||':stop','agent_ai',1);
  if result->>'ok'='true' then raise exception 'stopped_ai'; end if;
  update public.agent_test_lab_runs set status='running' where id=r;

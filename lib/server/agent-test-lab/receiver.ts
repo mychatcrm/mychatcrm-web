@@ -8,18 +8,25 @@ import {
 } from "@/lib/integrations/evolution-api";
 import { buildEvolutionWebhookUrl } from "@/lib/integrations/evolution-webhook-url";
 import { normalizeInstanceConnectToQrDataUrl } from "@/lib/integrations/evolution-connect-qr";
+import { checkWhatsAppCloudConnectionHealth } from "@/lib/integrations/whatsapp-cloud";
+import { deleteWhatsAppCloudConnection, upsertWhatsAppCloudConnection } from "@/lib/server/whatsapp-cloud-connections";
+import { setSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
 import { LAB_OWNER_ID, labMaskedJid, labPhoneJid } from "@/lib/agent-test-lab/policy";
 import { labAudit, labHash } from "./auth";
 import { provisionLabIsolatedAgent, labTenantIdFor } from "./isolation";
+import type { LabMetaCredentials } from "./meta-onboarding";
 
 export const LAB_RECEIVER_PREFIX = "mychatcrm-lab-receiver-";
+export const LAB_META_RECEIVER_PREFIX = "mychatcrm-lab-meta-receiver-";
 
 async function getLabReceiverRow() {
   const result = await createSupabaseServiceClient().from("agent_test_lab_connections")
-    .select("id,instance_name,state,wa_jid,updated_at")
+    .select("id,instance_name,provider,state,wa_jid,webhook_secret_hash,phone_number_id,waba_id,access_token,display_phone,verified_name,webhook_subscribed,phone_registered,updated_at")
     .eq("owner_admin_id", LAB_OWNER_ID).eq("purpose", "receiver").is("archived_at", null).maybeSingle();
   if (result.error) throw new Error("receiver_read_failed");
-  if (result.data && !result.data.instance_name.startsWith(LAB_RECEIVER_PREFIX)) throw new Error("receiver_identity_invalid");
+  if (result.data && !result.data.instance_name.startsWith(
+    result.data.provider === "meta_cloud" ? LAB_META_RECEIVER_PREFIX : LAB_RECEIVER_PREFIX,
+  )) throw new Error("receiver_identity_invalid");
   return result.data;
 }
 
@@ -27,19 +34,57 @@ export async function inspectLabReceiver() {
   const row = await getLabReceiverRow();
   if (!row) return null;
   const sb = createSupabaseServiceClient();
-  const routed = await sb.from("tenant_evolution_instances").select("id,tenant_id,organic_agent_id")
-    .eq("instance_name", row.instance_name).maybeSingle();
+  const routed = row.provider === "meta_cloud"
+    ? await sb.from("whatsapp_cloud_connections").select("phone_number_id,tenant_id")
+      .eq("phone_number_id", row.phone_number_id ?? "").maybeSingle()
+    : await sb.from("tenant_evolution_instances").select("id,tenant_id,organic_agent_id")
+      .eq("instance_name", row.instance_name).maybeSingle();
   if (routed.error) throw new Error("receiver_routing_read_failed");
+  const route = routed.data as Record<string, unknown> | null;
+  const labTenantId = typeof route?.tenant_id === "string" ? route.tenant_id : null;
+  const isolated = labTenantId
+    ? await sb.from("agent_test_lab_isolated_agents").select("lab_agent_id")
+      .eq("owner_admin_id", LAB_OWNER_ID).eq("lab_tenant_id", labTenantId).is("archived_at", null).maybeSingle()
+    : { data: null, error: null };
+  if (isolated.error) throw new Error("receiver_routing_read_failed");
   return {
-    id: row.id, state: row.state, number: labMaskedJid(row.wa_jid), updatedAt: row.updated_at,
-    labTenantId: routed.data?.tenant_id ?? null, labAgentId: routed.data?.organic_agent_id ?? null,
-    connectionId: routed.data?.id ?? null,
+    id: row.id, provider: row.provider, state: row.state, number: labMaskedJid(row.wa_jid), updatedAt: row.updated_at,
+    labTenantId, labAgentId: row.provider === "meta_cloud" ? isolated.data?.lab_agent_id ?? null : route?.organic_agent_id ?? null,
+    connectionId: row.provider === "meta_cloud" ? route?.phone_number_id ?? null : route?.id ?? null,
   };
 }
 
 async function refreshReceiver() {
   const row = await getLabReceiverRow();
   if (!row) return null;
+  if (row.provider === "meta_cloud") {
+    if (!row.phone_number_id || !row.access_token) throw new Error("receiver_identity_invalid");
+    const health = await checkWhatsAppCloudConnectionHealth({ phoneNumberId: row.phone_number_id, accessToken: row.access_token });
+    const jid = health.ok ? labPhoneJid(health.displayPhoneNumber ?? row.display_phone) : null;
+    let state = health.ok && jid && row.webhook_subscribed && row.phone_registered ? "open" : "action_required";
+    const sb = createSupabaseServiceClient();
+    if (state === "open" && jid) {
+      const [foreign, tester] = await Promise.all([
+        sb.from("whatsapp_cloud_connections").select("tenant_id").eq("phone_number_id", row.phone_number_id).eq("active", true),
+        sb.from("agent_test_lab_connections").select("id").eq("owner_admin_id", LAB_OWNER_ID)
+          .eq("purpose", "sender").eq("wa_jid", jid).is("archived_at", null).maybeSingle(),
+      ]);
+      if (foreign.error || tester.error) throw new Error("receiver_isolation_unconfirmed");
+      if ((foreign.data ?? []).some(item => !String(item.tenant_id).startsWith("tenant-lab-")) || tester.data) {
+        state = "conflict";
+        await labAudit(tester.data ? "receiver.same_as_tester" : "receiver.number_collision", row.id, "blocked");
+      }
+    }
+    const saved = await sb.from("agent_test_lab_connections").update({
+      state,
+      wa_jid: state === "conflict" ? null : jid,
+      display_phone: health.ok ? health.displayPhoneNumber : row.display_phone,
+      verified_name: health.ok ? health.verifiedName : row.verified_name,
+      updated_at: new Date().toISOString(),
+    }).eq("id", row.id).is("archived_at", null);
+    if (saved.error) throw new Error("receiver_update_failed");
+    return { ...row, state, wa_jid: state === "conflict" ? null : jid };
+  }
   const result = await evolutionFetchInstances(row.instance_name);
   if (!result.ok) throw new Error("receiver_provider_unavailable");
   const exact = result.data.find(item => item.name === row.instance_name);
@@ -93,6 +138,7 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
 
   const sb = createSupabaseServiceClient();
   let row = await getLabReceiverRow();
+  if (row?.provider === "meta_cloud") throw new Error("receiver_other_provider_connected");
   const activeRuns = await sb.from("agent_test_lab_runs").select("id", { count: "exact", head: true })
     .eq("owner_admin_id", LAB_OWNER_ID).not("status", "in", "(completed,failed,cancelled)");
   if (activeRuns.error || activeRuns.count !== 0) throw new Error("receiver_has_active_runs");
@@ -159,6 +205,96 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
   return { connection: await inspectLabReceiver(), qr, copy };
 }
 
+export async function connectLabMetaReceiver(
+  sourceTenantId: string,
+  sourceAgentId: string,
+  credentials: LabMetaCredentials,
+) {
+  const sb = createSupabaseServiceClient();
+  let row = await getLabReceiverRow();
+  if (row && row.provider !== "meta_cloud") throw new Error("receiver_other_provider_connected");
+  const activeRuns = await sb.from("agent_test_lab_runs").select("id", { count: "exact", head: true })
+    .eq("owner_admin_id", LAB_OWNER_ID).not("status", "in", "(completed,failed,cancelled)");
+  if (activeRuns.error || activeRuns.count !== 0) throw new Error("receiver_has_active_runs");
+  if (row) {
+    const routing = await inspectLabReceiver();
+    if (routing?.labTenantId !== labTenantIdFor(sourceTenantId, sourceAgentId) || routing.labAgentId !== `lab-${sourceAgentId}`.slice(0, 100)) {
+      throw new Error("receiver_target_mismatch");
+    }
+  }
+  const copy = await provisionLabIsolatedAgent(sourceTenantId, sourceAgentId);
+  const jid = labPhoneJid(credentials.displayPhone);
+  if (!jid) throw new Error("meta_number_verification_failed");
+  const [foreign, tester] = await Promise.all([
+    sb.from("whatsapp_cloud_connections").select("tenant_id").eq("phone_number_id", credentials.phoneNumberId).eq("active", true),
+    sb.from("agent_test_lab_connections").select("id").eq("owner_admin_id", LAB_OWNER_ID)
+      .eq("purpose", "sender").eq("wa_jid", jid).is("archived_at", null).maybeSingle(),
+  ]);
+  if (foreign.error || tester.error) throw new Error("receiver_isolation_unconfirmed");
+  if ((foreign.data ?? []).some(item => item.tenant_id !== copy.labTenantId) || tester.data) {
+    throw new Error("receiver_number_already_in_use");
+  }
+
+  const cloud = await upsertWhatsAppCloudConnection({
+    tenantId: copy.labTenantId,
+    slotIndex: 0,
+    phoneNumberId: credentials.phoneNumberId,
+    wabaId: credentials.wabaId,
+    accessToken: credentials.accessToken,
+    displayPhone: credentials.displayPhone,
+    verifiedName: credentials.verifiedName,
+  });
+  if (cloud.error) throw new Error("receiver_routing_failed");
+  await setSlotActiveProvider(copy.labTenantId, 0, "cloud_api");
+
+  const id = row?.id ?? randomUUID();
+  const values = {
+    owner_admin_id: LAB_OWNER_ID,
+    purpose: "receiver",
+    instance_name: `${LAB_META_RECEIVER_PREFIX}${id}`,
+    provider: "meta_cloud",
+    state: "open",
+    wa_jid: jid,
+    webhook_secret_hash: row?.webhook_secret_hash ?? labHash(randomUUID()),
+    phone_number_id: credentials.phoneNumberId,
+    waba_id: credentials.wabaId,
+    access_token: credentials.accessToken,
+    display_phone: credentials.displayPhone,
+    verified_name: credentials.verifiedName,
+    webhook_subscribed: credentials.webhookSubscribed,
+    phone_registered: credentials.phoneRegistered,
+    updated_at: new Date().toISOString(),
+  };
+  const reserved = row
+    ? await sb.from("agent_test_lab_connections").update(values).eq("id", id).is("archived_at", null)
+    : await sb.from("agent_test_lab_connections").insert({ id, ...values });
+  if (reserved.error) {
+    if (!row) await deleteWhatsAppCloudConnection(copy.labTenantId, 0);
+    throw new Error("receiver_reservation_failed");
+  }
+
+  const existing = await sb.from("lead_distribution_rules").select("id")
+    .eq("tenant_id", copy.labTenantId).eq("source", "whatsapp_organico").maybeSingle();
+  if (existing.error) throw new Error("receiver_rule_read_failed");
+  const ruleRow = {
+    tenant_id: copy.labTenantId,
+    name: "Laboratório — WhatsApp orgânico",
+    source: "whatsapp_organico",
+    distribution_type: "specific_agents",
+    transport: "cloud_api",
+    connection_id: credentials.phoneNumberId,
+    agent_ids: [copy.labAgentId],
+    employee_ids: [], mappings: [], active: true, order_index: 1, created_by: LAB_OWNER_ID,
+  };
+  const rule = existing.data
+    ? await sb.from("lead_distribution_rules").update(ruleRow).eq("id", existing.data.id).eq("tenant_id", copy.labTenantId)
+    : await sb.from("lead_distribution_rules").insert(ruleRow);
+  if (rule.error) throw new Error("receiver_rule_failed");
+  await labAudit("receiver.meta_connect_requested", id);
+  await refreshReceiver();
+  return { connection: await inspectLabReceiver(), qr: null, copy };
+}
+
 export async function refreshLabReceiver() {
   await refreshReceiver();
   return inspectLabReceiver();
@@ -173,13 +309,23 @@ export async function disconnectLabReceiver() {
     .not("status", "in", "(completed,failed,cancelled)");
   if (runs.error || runs.count !== 0) throw new Error("receiver_has_active_runs");
   await labAudit("receiver.disconnect_requested", row.id);
-  await evolutionLogoutInstance(row.instance_name);
-  await evolutionDeleteInstance(row.instance_name);
-  const inventory = await evolutionFetchInstances(row.instance_name);
-  if (!inventory.ok || inventory.data.some(item => item.name === row.instance_name)) throw new Error("receiver_removal_unconfirmed");
-  const routing = await sb.from("tenant_evolution_instances").delete().eq("instance_name", row.instance_name);
-  if (routing.error) throw new Error("receiver_routing_cleanup_failed");
+  const existingRoute = await inspectLabReceiver();
+  if (row.provider === "meta_cloud") {
+    if (existingRoute?.labTenantId) await deleteWhatsAppCloudConnection(existingRoute.labTenantId, 0);
+  } else {
+    await evolutionLogoutInstance(row.instance_name);
+    await evolutionDeleteInstance(row.instance_name);
+    const inventory = await evolutionFetchInstances(row.instance_name);
+    if (!inventory.ok || inventory.data.some(item => item.name === row.instance_name)) throw new Error("receiver_removal_unconfirmed");
+    const routing = await sb.from("tenant_evolution_instances").delete().eq("instance_name", row.instance_name);
+    if (routing.error) throw new Error("receiver_routing_cleanup_failed");
+  }
+  if (existingRoute?.labTenantId) {
+    const rules = await sb.from("lead_distribution_rules").delete()
+      .eq("tenant_id", existingRoute.labTenantId).eq("source", "whatsapp_organico");
+    if (rules.error) throw new Error("receiver_routing_cleanup_failed");
+  }
   const archived = await sb.from("agent_test_lab_connections")
-    .update({ state: "disconnected", archived_at: new Date().toISOString() }).eq("id", row.id);
+    .update({ state: "disconnected", access_token: null, archived_at: new Date().toISOString() }).eq("id", row.id);
   if (archived.error) throw new Error("receiver_archive_failed");
 }

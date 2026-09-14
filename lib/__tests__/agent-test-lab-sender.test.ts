@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ sender: vi.fn(), text: vi.fn(), media: vi.fn(), audio: vi.fn(), sign: vi.fn(),
+const m = vi.hoisted(() => ({ sender: vi.fn(), text: vi.fn(), media: vi.fn(), audio: vi.fn(), cloudText: vi.fn(), cloudMedia: vi.fn(), sign: vi.fn(),
   wait: vi.fn(), authorize: vi.fn(), rows: {} as Record<string, { data: unknown; error: unknown }> }));
 vi.mock("@/lib/server/agent-test-lab/connections", () => ({ getLabSender: m.sender }));
 vi.mock("@/lib/server/agent-test-lab/assets-store", () => ({ signLabAsset: m.sign }));
 vi.mock("@/lib/integrations/evolution-api", () => ({ evolutionSendText: m.text, evolutionSendMedia: m.media,
   evolutionSendAudio: m.audio, evolutionWaitForMessageStatus: m.wait, jidToDigits: (s: string) => s.split("@")[0] }));
+vi.mock("@/lib/integrations/whatsapp-cloud", () => ({ sendWhatsAppTextMessage: m.cloudText, sendWhatsAppMediaMessage: m.cloudMedia }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient: () => ({ from: (table: string) => {
   const q = { select: () => q, eq: () => q, is: () => q, maybeSingle: async () => m.rows[table] }; return q;
 } }) }));
@@ -14,12 +15,14 @@ const destination = { tenantId: "tenant-lab-fixture", connectionId: "connection"
 beforeEach(() => {
   vi.clearAllMocks();
   m.authorize.mockResolvedValue(true);
-  m.sender.mockResolvedValue({ state: "open", instance_name: "mychatcrm-lab-sender-fixture", wa_jid: "447700900002@s.whatsapp.net" });
+  m.sender.mockResolvedValue({ provider: "evolution", state: "open", instance_name: "mychatcrm-lab-sender-fixture", wa_jid: "447700900002@s.whatsapp.net" });
   m.rows = { agent_test_lab_destinations: { data: { id: "authorized" }, error: null },
     tenant_evolution_instances: { data: { wa_jid: target, connection_state: "open" }, error: null },
     whatsapp_cloud_connections: { data: { display_phone: "+44 7700 900001", active: true }, error: null } };
   m.text.mockResolvedValue({ ok: true, data: { key: { id: "receipt" }, status: "SERVER_ACK" } });
   m.media.mockResolvedValue({ ok: true, data: { key: { id: "receipt" } } });
+  m.cloudText.mockResolvedValue({ ok: true, status: 200, messageId: "wamid.cloud" });
+  m.cloudMedia.mockResolvedValue({ ok: true, status: 200, messageId: "wamid.media" });
   m.wait.mockResolvedValue({ status: "DELIVERY_ACK" });
   m.sign.mockResolvedValue({ url: "https://signed.invalid/asset", asset: { kind: "image", mimeType: "image/png", filename: "controlled.png" } });
 });
@@ -60,6 +63,13 @@ describe("laboratory transport identity", () => {
     m.text.mockRejectedValue(new Error("timeout"));
     expect(await dispatchLabText({ ...destination, text: "Hello" })).toMatchObject({ outcome: "inconclusive" });
     expect(m.text).toHaveBeenCalledTimes(1);
+  });
+  it("sends through the exact Meta tester connection", async () => {
+    m.sender.mockResolvedValue({ provider: "meta_cloud", state: "open", instance_name: "mychatcrm-lab-meta-sender-fixture",
+      wa_jid: "447700900002@s.whatsapp.net", phone_number_id: "12345", access_token: "secret" });
+    expect(await dispatchLabText({ ...destination, channel: "meta_cloud", text: "Hello" })).toMatchObject({ outcome: "confirmed", providerMessageId: "wamid.cloud" });
+    expect(m.cloudText).toHaveBeenCalledWith(expect.objectContaining({ phoneNumberId: "12345", accessToken: "secret", toWaId: "447700900001" }));
+    expect(m.text).not.toHaveBeenCalled();
   });
   it("honors a pause/stop that wins immediately before transport, including media", async () => {
     m.authorize.mockResolvedValue(false);
