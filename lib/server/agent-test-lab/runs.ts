@@ -37,13 +37,13 @@ export async function createLabRun(input: LabRunRequestV1) {
     const target = inspected.effective;
     const confirmed = await sb.rpc("confirm_agent_test_lab_destination_v1", {
       p_owner: LAB_OWNER_ID, p_tenant_id: target.tenantId, p_connection_id: target.connectionId,
-      p_channel: input.channel, p_target_jid: inspected.targetJid, p_sender_jid: inspected.senderJid,
+      p_channel: inspected.effectiveChannel, p_target_jid: inspected.targetJid, p_sender_jid: inspected.senderJid,
     });
     if (confirmed.error) throw new Error("destination_confirmation_failed");
     Object.assign(targets, {
       sender_connection_id: inspected.senderConnectionId, target_tenant_id: target.tenantId,
       target_agent_id: target.agentId, target_connection_id: target.connectionId, target_rule_id: target.ruleId,
-      target_channel: input.channel, target_jid: inspected.targetJid, target_form_id: input.formId,
+      target_channel: inspected.effectiveChannel, target_jid: inspected.targetJid, target_form_id: input.formId,
       isolated_agent_id: inspected.isolatedAgentId,
       tester_jid: inspected.senderJid,
     });

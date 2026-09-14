@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return NextResponse.json({ ok: false }, { status: 401 });
     const sb = createSupabaseServiceClient();
     const connection = await sb.from("agent_test_lab_connections").select("id,instance_name,webhook_secret_hash")
-      .eq("id", id).eq("owner_admin_id", LAB_OWNER_ID).eq("purpose", "sender").is("archived_at", null).maybeSingle();
+      .eq("id", id).eq("owner_admin_id", LAB_OWNER_ID).eq("purpose", "sender").eq("provider", "evolution").is("archived_at", null).maybeSingle();
     if (connection.error) return NextResponse.json({ ok: false }, { status: 503 });
     if (!connection.data || !connection.data.instance_name.startsWith(LAB_INSTANCE_PREFIX) || !labSecretMatches(token, connection.data.webhook_secret_hash)) return NextResponse.json({ ok: false }, { status: 401 });
     const body = await boundedJson(request);

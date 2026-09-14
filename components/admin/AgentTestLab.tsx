@@ -7,16 +7,18 @@ import { isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { labCodeLabel, LAB_STATUS_LABELS, LAB_VERDICT_LABELS } from "@/lib/agent-test-lab/presentation";
 import { AgentTestLabConversation } from "./AgentTestLabConversation";
 import { AgentTestLabCleanup } from "./AgentTestLabCleanup";
+import { loadFbSdk } from "@/lib/client/facebook-sdk";
 
 type Run = { id: string; trace_id: string; mode: LabMode; status: string; verdict: string | null; deployed_sha: string; config_hash: string;
   result_code: string | null; sent_messages: number; max_messages: number; budget_brl: number; spent_brl: number; reserved_brl: number;
   created_at: string; workflow_run_id: number | null };
-type Snapshot = { sha: string; sender: { id: string; state: string; number: string | null; updatedAt: string } | null;
+type LabProvider = "evolution" | "meta_cloud";
+type Snapshot = { sha: string; sender: { id: string; provider: LabProvider; state: string; number: string | null; updatedAt: string } | null;
   tenants: { id: string; name: string; status: string }[]; agents: { agent_id: string; display_name: string; active: boolean }[];
   connections: { id: string; channel: "evolution" | "meta_cloud"; state: string; number: string | null; slot: number }[];
   rules: { id: string; name: string; active: boolean; connection_id: string; agent_ids: string[] }[];
   runs: Run[]; capabilities: { internal: boolean; modes: Partial<Record<LabMode, boolean>>; realReason: string } };
-type LabReceiver = { id: string; state: string; number: string | null; labTenantId: string | null; labAgentId: string | null } | null;
+type LabReceiver = { id: string; provider: LabProvider; state: string; number: string | null; labTenantId: string | null; labAgentId: string | null; connectionId: string | null } | null;
 type Detail = { run: Run; evidence: { check_code: string; verdict: string; description: string; resource_ids: string[] }[];
   steps: { ordinal: number; kind: string; status: string; dispatch_started_at: string | null; confirmed_at: string | null }[];
   costs: { category: string; reserved_brl: number; actual_brl: number | null }[] };
@@ -58,6 +60,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const [checks, setChecks] = useState<LabCheck[] | null>(null), [qr, setQr] = useState<string | null>(null), [detail, setDetail] = useState<Detail | null>(null);
   const [receiver, setReceiver] = useState<LabReceiver>(null), [receiverQr, setReceiverQr] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const metaSdkConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
+  const metaSdkErrorRef = useRef<string | null>(null);
   const showError = (err: unknown) => { const code = err instanceof Error ? err.message : "lab_failed"; setError(labCodeLabel(code)); if (code === "lab_locked") setUnlocked(false); };
   const reload = useCallback(async (signal?: AbortSignal) => {
     const data = await api<Snapshot>(`/bootstrap${tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ""}`, { signal });
@@ -77,6 +81,21 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
       .then(result => setReceiver(result.connection)).catch(() => {});
     return () => controller.abort();
   }, [reload, unlocked]);
+  useEffect(() => {
+    if (!unlocked || metaSdkConfigRef.current) return;
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/agent-tests/meta/sdk-config", { credentials: "same-origin", cache: "no-store" });
+        if (!response.ok) throw new Error(`sdk-config ${response.status}`);
+        const config = await response.json() as { app_id: string; config_id: string };
+        await loadFbSdk(config.app_id);
+        metaSdkConfigRef.current = config;
+        metaSdkErrorRef.current = null;
+      } catch (sdkError) {
+        metaSdkErrorRef.current = sdkError instanceof Error ? sdkError.message : "meta_sdk_failed";
+      }
+    })();
+  }, [unlocked]);
   useEffect(() => { if (detail) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [detail]);
   async function act(action: () => Promise<void>) {
     setBusy(true); setError(""); setNotice("");
@@ -86,7 +105,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const selectedAgent = snapshot?.agents.find(agent => agent.agent_id === agentId);
   function requestBody() {
     return { mode, profile, limits: { maxMessages, maxMinutes, budgetBrl }, targetKind, tenantId: tenantId || "internal", agentId: agentId || "internal",
-      ruleId: ruleId || null, formId: formId || null, connectionId: connectionId || null, channel: selectedConnection?.channel ?? "evolution",
+      ruleId: ruleId || null, formId: formId || null, connectionId: connectionId || null,
+      channel: targetKind === "copy" && receiver?.provider ? receiver.provider : selectedConnection?.channel ?? "evolution",
       testerModel: model || null, allowedEffects: effects, originalConfirmed: confirmed, reuseTestContext: false,
       scenario: parseLabScenario({ version: 1, name, goal: goal || "Executar a suíte selecionada na versão publicada.", language,
         steps: structuredScript !== null ? JSON.parse(structuredScript)
@@ -98,6 +118,80 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   async function control(run: Run, action: string) {
     await api(`/runs/${run.id}`, { method: "POST", body: JSON.stringify({ action }) }); await reload();
     if (detail?.run.id === run.id) setDetail(await api<Detail>(`/runs/${run.id}`));
+  }
+
+  function connectMeta(purpose: "sender" | "receiver") {
+    if (purpose === "receiver" && (!tenantId || !agentId)) {
+      setError("Escolha o cliente e o agente antes de conectar a API Oficial na cópia.");
+      return;
+    }
+    const config = metaSdkConfigRef.current;
+    if (!window.FB || !config) {
+      setError(metaSdkErrorRef.current
+        ? `Não foi possível carregar a Meta (${metaSdkErrorRef.current}). Recarregue a página.`
+        : "A Meta ainda está carregando. Aguarde alguns segundos e tente novamente.");
+      return;
+    }
+    setBusy(true); setError(""); setNotice("");
+    let wabaId: string | null = null, phoneNumberId: string | null = null, callbackFired = false;
+    const onMessage = (event: MessageEvent) => {
+      let hostname = "";
+      try { hostname = new URL(event.origin).hostname; } catch { return; }
+      if (hostname !== "facebook.com" && !hostname.endsWith(".facebook.com")) return;
+      try {
+        const data = (typeof event.data === "string" ? JSON.parse(event.data) : event.data) as {
+          type?: string; event?: string; data?: { waba_id?: string; phone_number_id?: string };
+        };
+        if (data?.type === "WA_EMBEDDED_SIGNUP" && (data.event === "FINISH" || data.event === "FINISH_ONLY_WABA")) {
+          wabaId = data.data?.waba_id ?? null;
+          phoneNumberId = data.data?.phone_number_id ?? null;
+        }
+      } catch { /* unrelated Facebook postMessage */ }
+    };
+    const cleanup = () => window.removeEventListener("message", onMessage);
+    const timer = window.setTimeout(() => {
+      if (!callbackFired) {
+        cleanup(); setBusy(false); setError("O popup da Meta não respondeu. Permita popups e tente novamente.");
+      }
+    }, 120_000);
+    window.addEventListener("message", onMessage);
+    try {
+      window.FB.login((response) => {
+        callbackFired = true; window.clearTimeout(timer);
+        void (async () => {
+          try {
+            if (!response.authResponse?.code) throw new Error("Conexão Meta cancelada ou não autorizada.");
+            for (let i = 0; i < 30 && (!wabaId || !phoneNumberId); i++) await new Promise(resolve => setTimeout(resolve, 100));
+            if (!wabaId || !phoneNumberId) throw new Error("Nenhum número WhatsApp Business foi confirmado pela Meta.");
+            const result = await api<{ connection: NonNullable<Snapshot["sender"]> | NonNullable<LabReceiver>; copy?: { unavailable: { dependency: string; reason: string }[] } }>(
+              "/meta/exchange-code",
+              { method: "POST", body: JSON.stringify({
+                purpose, code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId,
+                ...(purpose === "receiver" ? { tenantId, agentId } : {}),
+              }) },
+            );
+            if (purpose === "receiver") setReceiver(result.connection as NonNullable<LabReceiver>);
+            await reload(); clearApproval();
+            setNotice(purpose === "sender"
+              ? "WhatsApp testador conectado pela API Oficial Meta."
+              : result.copy?.unavailable.length
+                ? `Cópia conectada pela Meta. Dependências indisponíveis: ${result.copy.unavailable.map(item => item.dependency).join(", ")}.`
+                : "Cópia conectada pela API Oficial Meta.");
+          } catch (metaError) {
+            showError(metaError);
+          } finally {
+            cleanup(); setBusy(false);
+          }
+        })();
+      }, {
+        config_id: config.config_id,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
+      });
+    } catch (metaError) {
+      window.clearTimeout(timer); cleanup(); setBusy(false); showError(metaError);
+    }
   }
 
   return <div className="mx-auto max-w-7xl space-y-6 p-4 text-white sm:p-8">
@@ -124,7 +218,10 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
       </section> : !snapshot ? <p role="status" className="text-sm text-white/60">Carregando laboratório…</p> : <>
       <div className="grid gap-4 md:grid-cols-3">
         <section className={card}><h2 className="text-sm text-white/55">WhatsApp testador</h2><p className="mt-2 font-semibold">{snapshot.sender?.state === "open" ? "Conectado" : "Não conectado"}</p><p className="text-sm text-white/50">{snapshot.sender?.number ?? "Número exclusivo do laboratório"}</p>
-          <div className="mt-4 flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => act(async () => { const data = await api<{ qr: string | null }>("/connection", { method: "POST", body: JSON.stringify({ action: "connect" }) }); setQr(data.qr); await reload(); })}>Conectar / QR</button>
+          {snapshot.sender?.provider && <p className="mt-1 text-xs text-sky-300">{snapshot.sender.provider === "meta_cloud" ? "API Oficial Meta" : "QR Code · Evolution"}</p>}
+          {snapshot.sender?.provider === "meta_cloud" && <p className="mt-2 text-xs text-amber-300">A API Oficial só inicia texto livre dentro da janela de 24 horas da Meta. Fora dela, a Meta exige template aprovado.</p>}
+          <div className="mt-4 flex flex-wrap gap-2"><button className={button} disabled={busy || snapshot.sender?.provider === "meta_cloud"} onClick={() => act(async () => { const data = await api<{ qr: string | null }>("/connection", { method: "POST", body: JSON.stringify({ action: "connect" }) }); setQr(data.qr); await reload(); })}>Conectar por QR</button>
+            <button className={button} disabled={busy || snapshot.sender?.provider === "evolution"} onClick={() => connectMeta("sender")}>Conectar API Oficial Meta</button>
             <button className={button} disabled={busy} onClick={() => act(async () => { await api("/connection", { method: "POST", body: JSON.stringify({ action: "refresh" }) }); await reload(); })}>Verificar</button>
             {snapshot.sender && <button className={button} disabled={busy} onClick={() => { if (window.confirm("Desconectar somente o WhatsApp testador?")) void act(async () => { await api("/connection", { method: "DELETE" }); setQr(null); await reload(); }); }}>Desconectar</button>}</div>
           {qr && <div className="mt-4 rounded-xl bg-white p-4"><Image unoptimized src={qr} alt="QR privado para conectar o WhatsApp testador" width={240} height={240} className="mx-auto" /><button className="mt-2 text-sm text-black" onClick={() => setQr(null)}>Ocultar QR</button></div>}
@@ -163,8 +260,9 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           <p className="font-medium">Número que a cópia atende</p>
           <p className="mt-1 text-white/60">A cópia leva prompts e configuração, sem histórico, leads nem credenciais do cliente. Ela precisa da própria linha — diferente do número testador — e passa pelo recebimento real e pelas regras de verdade.</p>
           <p className="mt-2 text-white/50">Estado: {receiver ? `${receiver.state}${receiver.number ? ` · ${receiver.number}` : ""}` : "não conectado"}</p>
+          {receiver?.provider && <p className="mt-1 text-xs text-sky-300">{receiver.provider === "meta_cloud" ? "API Oficial Meta" : "QR Code · Evolution"}</p>}
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className={button} disabled={busy || !tenantId || !agentId} onClick={() => act(async () => {
+            <button className={button} disabled={busy || !tenantId || !agentId || receiver?.provider === "meta_cloud"} onClick={() => act(async () => {
               const data = await api<{ qr: string | null; connection: typeof receiver; copy: { unavailable: { dependency: string; reason: string }[] } }>(
                 "/receiver", { method: "POST", body: JSON.stringify({ action: "connect", tenantId, agentId }) });
               setReceiverQr(data.qr); setReceiver(data.connection);
@@ -172,7 +270,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
                 ? `Cópia criada. Dependências indisponíveis: ${data.copy.unavailable.map(item => item.dependency).join(", ")}.`
                 : "Cópia criada com todas as dependências disponíveis.");
               clearApproval();
-            })}>Conectar / QR da cópia</button>
+            })}>Conectar cópia por QR</button>
+            <button className={button} disabled={busy || !tenantId || !agentId || receiver?.provider === "evolution"} onClick={() => connectMeta("receiver")}>Conectar cópia pela API Oficial Meta</button>
             <button className={button} disabled={busy} onClick={() => act(async () => {
               const data = await api<{ connection: typeof receiver }>("/receiver", { method: "POST", body: JSON.stringify({ action: "refresh" }) });
               setReceiver(data.connection); })}>Verificar</button>

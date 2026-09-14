@@ -61,6 +61,9 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   // (salva no chat de monitoramento, interpreta áudio/imagem e responde com IA).
   const systemInbound = parseWhatsAppCloudInbound(json);
   if (systemInbound) {
+    const { captureMetaLabSenderInbound } = await import("@/lib/server/agent-test-lab/meta-intake");
+    const laboratoryHandled = await captureMetaLabSenderInbound(systemInbound);
+    if (laboratoryHandled) return NextResponse.json({ ok: true });
     const handled = await handleSystemMetaInbound(systemInbound).catch((error) => {
       console.warn("[webhooks/whatsapp] system_meta_inbound_failed", {
         error: error instanceof Error ? error.message : "handle_failed",
@@ -113,6 +116,24 @@ export async function handleWhatsAppCloudWebhookPayload(json: unknown): Promise<
   const phone = inbound.fromWaId.replace(/\D/g, "");
   const remoteJid = buildWhatsappRemoteJid(phone);
   const receivedAt = new Date().toISOString();
+
+  if (tenantId.startsWith("tenant-lab-")) {
+    const { acceptsMetaLabReceiverInbound } = await import("@/lib/server/agent-test-lab/meta-intake");
+    const accepted = await acceptsMetaLabReceiverInbound({
+      tenantId,
+      phoneNumberId: inbound.phoneNumberId,
+      remoteJid,
+      messageId: inbound.messageId,
+      providerTime: inbound.providerOccurredAt ?? receivedAt,
+    }).catch((error) => {
+      console.warn("[webhooks/whatsapp] lab_meta_receiver_authorization_failed", {
+        tenant_id: tenantId,
+        error: error instanceof Error ? error.message : "authorization_failed",
+      });
+      return false;
+    });
+    if (!accepted) return NextResponse.json({ ok: true, blocked: "lab_inbound_not_authorized" });
+  }
 
   // A mensagem mínima é persistida antes das consultas de jornada/lead para
   // alimentar o painel em tempo real. O enriquecimento continua obrigatório e
