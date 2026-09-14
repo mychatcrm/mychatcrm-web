@@ -3,11 +3,12 @@ const state = vi.hoisted(() => ({ cookie: "", session: null as Record<string, un
   error: null as unknown, adminSession: null as Record<string, unknown> | null }));
 vi.mock("next/headers", () => ({ cookies: () => ({ get: () => state.cookie ? { value: state.cookie } : undefined }) }));
 vi.mock("@/lib/admin-auth", () => ({ getAdminSessionFromCookies: async () => state.adminSession }));
+vi.mock("@/lib/server/admin-auth-db", () => ({ getAdminSessionByIdFromDb: async () => state.owner }));
 vi.mock("@/lib/server/operational-audit", () => ({ appendOperationalAuditEvent: vi.fn(async () => ({})) }));
 vi.mock("@/lib/supabase/server", () => ({ createSupabaseServiceClient: () => ({
   rpc: async () => ({ data: true, error: state.error }),
-  from: (table: string) => {
-    const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: table === "agent_test_lab_sessions" ? state.session : state.owner, error: state.error }),
+  from: () => {
+    const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: state.session, error: state.error }),
       insert: async () => ({ error: state.error }) }; return q;
   },
 }) }));
@@ -17,7 +18,7 @@ describe("laboratory owner reauthentication", () => {
     vi.stubEnv("AGENT_TEST_LAB_ENABLED", "true"); state.cookie = "A".repeat(43); state.error = null;
     state.adminSession = { adminId: "admin-renato-lagares", role: "super_admin" };
     state.session = { admin_id: "admin-renato-lagares", expires_at: new Date(Date.now() + 60000).toISOString(), password_version: null, revoked_at: null };
-    state.owner = { id: "admin-renato-lagares", role: "super_admin", active: true, password_changed_at: null };
+    state.owner = { adminId: "admin-renato-lagares", role: "super_admin", passwordChangedAt: 0 };
   });
   it("accepts an opaque token only after persisted owner verification", async () => expect((await requireLabOwner()).adminId).toBe("admin-renato-lagares"));
   it.each(["", "admin-renato-lagares:super_admin:123", "forged"]) ("rejects legacy or invented session %s", async cookie => {
@@ -28,7 +29,7 @@ describe("laboratory owner reauthentication", () => {
   it("rejects expired sessions", async () => { state.session!.expires_at = "2000-01-01T00:00:00Z"; await expect(requireLabOwner()).rejects.toThrow("lab_locked"); });
   it("rejects sessions belonging to another administrator", async () => { state.session!.admin_id = "another"; await expect(requireLabOwner()).rejects.toThrow("lab_locked"); });
   it("rejects deleted/suspended owners", async () => { state.owner = null; await expect(requireLabOwner()).rejects.toThrow("lab_locked"); });
-  it("invalidates sessions after a password change", async () => { state.owner!.password_changed_at = new Date().toISOString(); await expect(requireLabOwner()).rejects.toThrow("lab_locked"); });
+  it("invalidates sessions after a password change", async () => { state.owner!.passwordChangedAt = Date.now(); await expect(requireLabOwner()).rejects.toThrow("lab_locked"); });
   it("rejects non-owner roles", async () => { state.owner!.role = "admin"; await expect(requireLabOwner()).rejects.toThrow("lab_locked"); });
   it("respects the kill switch", async () => { vi.stubEnv("AGENT_TEST_LAB_ENABLED", "false"); await expect(requireLabOwner()).rejects.toThrow("lab_disabled"); });
   it.each([null, "https://attacker.example", "null"]) ("rejects cross-origin mutation %s", origin => {
