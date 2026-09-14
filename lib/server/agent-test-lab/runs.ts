@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import type { LabRunRequestV1 } from "@/lib/agent-test-lab/contracts";
 import { LAB_OWNER_ID, isLabInternalMode, assertLabUuid } from "@/lib/agent-test-lab/policy";
+import { isOperationalAuditOwnerIdentity } from "@/lib/admin-operational-audit-access";
+import { getAdminSessionByIdFromDb } from "@/lib/server/admin-auth-db";
 import { inspectLabTarget } from "./preflight";
 import { dispatchLabWorkflow, findLabWorkflow } from "./github";
 
@@ -89,8 +91,8 @@ export async function tickInternalLabRun(id: string) {
       next_step_at: new Date(Date.now() + 15000).toISOString() }).eq("id", id).eq("claim_token", claimToken);
     if (saved.error) throw new Error("run_update_failed");
   };
-  const owner = await sb.from("admin_users").select("id").eq("id", LAB_OWNER_ID).eq("active", true).eq("role", "super_admin").maybeSingle();
-  if (owner.error || !owner.data || run.status === "stopping") {
+  const owner = await getAdminSessionByIdFromDb(LAB_OWNER_ID);
+  if (!owner || !isOperationalAuditOwnerIdentity(owner) || run.status === "stopping") {
     await update({ status: "cancelled", verdict: "inconclusive", result_code: run.result_code ?? "owner_or_stop_requested", finished_at: new Date().toISOString() });
     return;
   }
