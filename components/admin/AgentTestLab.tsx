@@ -1,21 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import Image from "next/image";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LAB_MODES, LAB_MODE_LABELS, LAB_PROFILES, parseLabScenario, type LabMode, type LabCheck, type LabScenarioV1 } from "@/lib/agent-test-lab/contracts";
 import { isLabInternalMode } from "@/lib/agent-test-lab/policy";
 import { labCodeLabel, LAB_STATUS_LABELS, LAB_VERDICT_LABELS } from "@/lib/agent-test-lab/presentation";
+import { buildLabChecklist, nextLabStep, planLabProviderSwitch, LAB_PROVIDER_LABELS,
+  type LabConnectionView, type LabProvider, type LabRole, type LabSwitchPlan } from "@/lib/agent-test-lab/connection-plan";
 import { AgentTestLabConversation } from "./AgentTestLabConversation";
 import { AgentTestLabCleanup } from "./AgentTestLabCleanup";
+import { AgentTestLabConnectionCard } from "./AgentTestLabConnectionCard";
+import { AgentTestLabChecklist } from "./AgentTestLabChecklist";
 import { loadFbSdk } from "@/lib/client/facebook-sdk";
 
 type Run = { id: string; trace_id: string; mode: LabMode; status: string; verdict: string | null; deployed_sha: string; config_hash: string;
   result_code: string | null; sent_messages: number; max_messages: number; budget_brl: number; spent_brl: number; reserved_brl: number;
   created_at: string; workflow_run_id: number | null };
-type LabProvider = "evolution" | "meta_cloud";
 type Snapshot = { sha: string; sender: { id: string; provider: LabProvider; state: string; number: string | null; updatedAt: string } | null;
   tenants: { id: string; name: string; status: string }[]; agents: { agent_id: string; display_name: string; active: boolean }[];
-  connections: { id: string; channel: "evolution" | "meta_cloud"; state: string; number: string | null; slot: number }[];
+  connections: { id: string; channel: LabProvider; state: string; number: string | null; slot: number }[];
   rules: { id: string; name: string; active: boolean; connection_id: string; agent_ids: string[] }[];
   runs: Run[]; capabilities: { internal: boolean; modes: Partial<Record<LabMode, boolean>>; realReason: string } };
 type LabReceiver = { id: string; provider: LabProvider; state: string; number: string | null; labTenantId: string | null; labAgentId: string | null; connectionId: string | null } | null;
@@ -26,6 +28,8 @@ const field = "w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 te
 const button = "rounded-xl border border-white/15 px-4 py-2 text-sm hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40";
 const primary = `${button} bg-orange-600 hover:bg-orange-500 border-orange-500`;
 const card = "rounded-2xl border border-white/10 bg-white/[0.025] p-5";
+const OPEN_RUN_STATUSES = ["completed", "failed", "cancelled"];
+const isOpenRun = (run: Run) => !OPEN_RUN_STATUSES.includes(run.status);
 const modeDescription: Record<LabMode, string> = {
   internal: "Regressões, TypeScript e build em runner separado. Não envia WhatsApp.",
   scenarios_10000: "Certificação determinística: dez mil combinações, sem conversa real.",
@@ -45,13 +49,20 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) throw new Error(body.code ?? "lab_request_failed");
   return body as T;
 }
+function Step({ id, index, title, hint, children }: { id: string; index: number; title: string; hint?: string; children: React.ReactNode }) {
+  return <section id={id} className={`${card} scroll-mt-6`}>
+    <h2 className="text-lg font-semibold"><span className="text-orange-400">{index}.</span> {title}</h2>
+    {hint && <p className="mt-1 text-sm text-white/55">{hint}</p>}
+    <div className="mt-4">{children}</div>
+  </section>;
+}
 
 export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const [unlocked, setUnlocked] = useState(false), [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [notice, setNotice] = useState("");
   const [tenantId, setTenantId] = useState(""), [agentId, setAgentId] = useState(""), [connectionId, setConnectionId] = useState("");
   const [ruleId, setRuleId] = useState(""), [formId, setFormId] = useState(""), [targetKind, setTargetKind] = useState<"copy" | "original">("copy");
-  const [mode, setMode] = useState<LabMode>("internal"), [profile, setProfile] = useState<"short" | "complete" | "custom">("short");
+  const [mode, setMode] = useState<LabMode>("manual"), [profile, setProfile] = useState<"short" | "complete" | "custom">("short");
   const [maxMessages, setMaxMessages] = useState(6), [maxMinutes, setMaxMinutes] = useState(20), [budgetBrl, setBudgetBrl] = useState(5);
   const [name, setName] = useState("Validação controlada"), [goal, setGoal] = useState(""), [language, setLanguage] = useState("pt-BR");
   const [script, setScript] = useState(""), [expectSilence, setExpectSilence] = useState(false), [model, setModel] = useState("");
@@ -59,7 +70,10 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const [confirmed, setConfirmed] = useState(false), [effects, setEffects] = useState<string[]>([]);
   const [checks, setChecks] = useState<LabCheck[] | null>(null), [qr, setQr] = useState<string | null>(null), [detail, setDetail] = useState<Detail | null>(null);
   const [receiver, setReceiver] = useState<LabReceiver>(null), [receiverQr, setReceiverQr] = useState<string | null>(null);
+  const [switchPlan, setSwitchPlan] = useState<Extract<LabSwitchPlan, { kind: "switch" }> | null>(null);
+  const [pendingMeta, setPendingMeta] = useState<LabRole | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const switchDialogRef = useRef<HTMLDialogElement>(null);
   const metaSdkConfigRef = useRef<{ app_id: string; config_id: string } | null>(null);
   const metaSdkErrorRef = useRef<string | null>(null);
   const showError = (err: unknown) => { const code = err instanceof Error ? err.message : "lab_failed"; setError(labCodeLabel(code)); if (code === "lab_locked") setUnlocked(false); };
@@ -67,6 +81,10 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     const data = await api<Snapshot>(`/bootstrap${tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ""}`, { signal });
     setSnapshot(data);
   }, [tenantId]);
+  const reloadReceiver = useCallback(async (signal?: AbortSignal) => {
+    const result = await api<{ connection: LabReceiver }>("/receiver", { signal });
+    setReceiver(result.connection);
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
@@ -77,10 +95,9 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     if (!unlocked) return;
     const controller = new AbortController();
     reload(controller.signal).catch(err => { if (err.name !== "AbortError") showError(err); });
-    api<{ connection: LabReceiver }>("/receiver", { signal: controller.signal })
-      .then(result => setReceiver(result.connection)).catch(() => {});
+    reloadReceiver(controller.signal).catch(() => {});
     return () => controller.abort();
-  }, [reload, unlocked]);
+  }, [reload, reloadReceiver, unlocked]);
   useEffect(() => {
     if (!unlocked || metaSdkConfigRef.current) return;
     void (async () => {
@@ -97,12 +114,19 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     })();
   }, [unlocked]);
   useEffect(() => { if (detail) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [detail]);
+  useEffect(() => { if (switchPlan) switchDialogRef.current?.showModal(); else switchDialogRef.current?.close(); }, [switchPlan]);
   async function act(action: () => Promise<void>) {
     setBusy(true); setError(""); setNotice("");
     try { await action(); } catch (err) { showError(err); } finally { setBusy(false); }
   }
   const selectedConnection = snapshot?.connections.find(connection => connection.id === connectionId);
   const selectedAgent = snapshot?.agents.find(agent => agent.agent_id === agentId);
+  // Stable identities so the checklist only recomputes when a line really changed.
+  const senderView = useMemo<LabConnectionView>(() => snapshot?.sender
+    ? { provider: snapshot.sender.provider, state: snapshot.sender.state, number: snapshot.sender.number } : null, [snapshot?.sender]);
+  const receiverView = useMemo<LabConnectionView>(() => receiver
+    ? { provider: receiver.provider, state: receiver.state, number: receiver.number } : null, [receiver]);
+  const openRuns = snapshot?.runs.filter(isOpenRun).length ?? 0;
   function requestBody() {
     return { mode, profile, limits: { maxMessages, maxMinutes, budgetBrl }, targetKind, tenantId: tenantId || "internal", agentId: agentId || "internal",
       ruleId: ruleId || null, formId: formId || null, connectionId: connectionId || null,
@@ -120,6 +144,32 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     if (detail?.run.id === run.id) setDetail(await api<Detail>(`/runs/${run.id}`));
   }
 
+  // The internal suite has to have passed on this exact published version before a
+  // real conversation is worth spending. The preflight answer is authoritative;
+  // until it is asked, only an internal run recorded on this SHA counts.
+  const internalCheck = checks?.find(check => check.code === "internal_tests_approved");
+  const internalApproved = internalCheck
+    ? internalCheck.ok
+    : Boolean(snapshot?.runs.some(run => isLabInternalMode(run.mode) && run.deployed_sha === snapshot.sha && run.verdict === "passed"));
+  const checklist = useMemo(() => buildLabChecklist({
+    internalOnly: isLabInternalMode(mode),
+    tester: senderView,
+    targetKind,
+    copy: receiverView,
+    agentSelected: Boolean(tenantId && agentId),
+    numberSelected: targetKind === "copy" ? receiverView?.state === "open" : Boolean(connectionId),
+    ruleSelected: targetKind === "copy" ? receiverView?.state === "open" : Boolean(ruleId),
+    expectsSilence: targetKind === "original" && !ruleId && expectSilence,
+    // Both numbers are masked the same way, so an identical mask is the strongest
+    // signal the page has. The server re-checks the real numbers before sending.
+    numbersDistinct: !(senderView?.number && (targetKind === "copy" ? receiverView?.number : selectedConnection?.number) === senderView.number),
+    internalApproved,
+    originalConfirmed: confirmed,
+  }), [mode, senderView, targetKind, receiverView, tenantId, agentId, connectionId, ruleId,
+    expectSilence, selectedConnection?.number, internalApproved, confirmed]);
+  const nextStep = nextLabStep(checklist);
+  const readyToStart = checklist.every(item => item.ok);
+
   function connectMeta(purpose: "sender" | "receiver") {
     if (purpose === "receiver" && (!tenantId || !agentId)) {
       setError("Escolha o cliente e o agente antes de conectar a API Oficial na cópia.");
@@ -132,7 +182,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
         : "A Meta ainda está carregando. Aguarde alguns segundos e tente novamente.");
       return;
     }
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError("");
     let wabaId: string | null = null, phoneNumberId: string | null = null, callbackFired = false;
     const onMessage = (event: MessageEvent) => {
       let hostname = "";
@@ -171,6 +221,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
               }) },
             );
             if (purpose === "receiver") setReceiver(result.connection as NonNullable<LabReceiver>);
+            setPendingMeta(null);
             await reload(); clearApproval();
             setNotice(purpose === "sender"
               ? "WhatsApp testador conectado pela API Oficial Meta."
@@ -194,6 +245,76 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     }
   }
 
+  async function connectEvolution(role: LabRole) {
+    if (role === "tester") {
+      const data = await api<{ qr: string | null }>("/connection", { method: "POST", body: JSON.stringify({ action: "connect" }) });
+      setQr(data.qr); await reload();
+      setNotice(data.qr ? "Leia o QR com o celular do número testador." : "WhatsApp testador conectado por QR Code · Evolution.");
+      return;
+    }
+    const data = await api<{ qr: string | null; connection: LabReceiver; copy: { unavailable: { dependency: string; reason: string }[] } }>(
+      "/receiver", { method: "POST", body: JSON.stringify({ action: "connect", tenantId, agentId }) });
+    setReceiverQr(data.qr); setReceiver(data.connection); clearApproval();
+    setNotice(data.copy.unavailable.length
+      ? `Cópia criada. Dependências indisponíveis: ${data.copy.unavailable.map(item => item.dependency).join(", ")}.`
+      : data.qr ? "Cópia criada. Leia o QR com o celular do número que a cópia atende." : "Cópia criada com todas as dependências disponíveis.");
+  }
+
+  /**
+   * Chooses a provider for one line. Nothing is removed here: when the other
+   * provider is live the owner sees exactly what will be disconnected and
+   * confirms it first, and an open run stops the swap with the reason instead of
+   * a silent block.
+   */
+  function chooseProvider(role: LabRole, target: LabProvider) {
+    setError(""); setNotice("");
+    const plan = planLabProviderSwitch({
+      role, target, activeRuns: openRuns,
+      current: role === "tester" ? senderView : receiverView,
+    });
+    if (plan.kind === "blocked") { setError(plan.reason); return; }
+    if (plan.kind === "switch") { setSwitchPlan(plan); return; }
+    if (target === "meta_cloud") { connectMeta(role === "tester" ? "sender" : "receiver"); return; }
+    void act(() => connectEvolution(role));
+  }
+
+  /** Runs a confirmed swap: remove this laboratory's link, then open the new one. */
+  async function runSwitch(plan: Extract<LabSwitchPlan, { kind: "switch" }>) {
+    setSwitchPlan(null); setBusy(true); setError(""); setNotice("");
+    let openMeta = false;
+    try {
+      if (plan.role === "tester") {
+        const data = await api<{ switched: boolean; qr: string | null }>("/connection",
+          { method: "POST", body: JSON.stringify({ action: "switch", target: plan.target }) });
+        setQr(data.qr ?? null);
+      } else {
+        const data = await api<{ switched: boolean; qr: string | null; connection: LabReceiver }>("/receiver",
+          { method: "POST", body: JSON.stringify({ action: "switch", target: plan.target, tenantId, agentId }) });
+        setReceiverQr(data.qr ?? null); setReceiver(data.connection ?? null);
+      }
+      await Promise.all([reload(), reloadReceiver()]);
+      clearApproval();
+      if (plan.target === "meta_cloud") {
+        setPendingMeta(plan.role); openMeta = true;
+        setNotice(`${LAB_PROVIDER_LABELS[plan.from]} desconectado nesta linha do laboratório. Conclua a conexão na janela da Meta.`);
+      } else {
+        setNotice(`Linha trocada para ${LAB_PROVIDER_LABELS.evolution}. Leia o QR para concluir.`);
+      }
+    } catch (err) {
+      // A disconnect that did not complete never opens a new connection.
+      showError(err);
+      await Promise.all([reload().catch(() => {}), reloadReceiver().catch(() => {})]);
+    } finally {
+      setBusy(false);
+    }
+    if (openMeta) connectMeta(plan.role === "tester" ? "sender" : "receiver");
+  }
+
+  const copyUnavailable = !tenantId || !agentId
+    ? { reason: "Escolha o cliente e o agente de origem antes de criar a cópia isolada e conectar a linha dela.",
+        action: { label: "Escolher agente", anchor: "lab-passo-agente" } }
+    : null;
+
   return <div className="mx-auto max-w-7xl space-y-6 p-4 text-white sm:p-8">
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div><p className="text-xs font-semibold uppercase tracking-[.2em] text-orange-400">Laboratório privado · Proprietário</p>
@@ -216,109 +337,166 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
           setUnlocked(true);
         })}>{busy ? "Liberando…" : "Liberar Central por 2 horas"}</button>
       </section> : !snapshot ? <p role="status" className="text-sm text-white/60">Carregando laboratório…</p> : <>
-      <div className="grid gap-4 md:grid-cols-3">
-        <section className={card}><h2 className="text-sm text-white/55">WhatsApp testador</h2><p className="mt-2 font-semibold">{snapshot.sender?.state === "open" ? "Conectado" : "Não conectado"}</p><p className="text-sm text-white/50">{snapshot.sender?.number ?? "Número exclusivo do laboratório"}</p>
-          {snapshot.sender?.provider && <p className="mt-1 text-xs text-sky-300">{snapshot.sender.provider === "meta_cloud" ? "API Oficial Meta" : "QR Code · Evolution"}</p>}
-          {snapshot.sender?.provider === "meta_cloud" && <p className="mt-2 text-xs text-amber-300">A API Oficial só inicia texto livre dentro da janela de 24 horas da Meta. Fora dela, a Meta exige template aprovado.</p>}
-          <div className="mt-4 flex flex-wrap gap-2"><button className={button} disabled={busy || snapshot.sender?.provider === "meta_cloud"} onClick={() => act(async () => { const data = await api<{ qr: string | null }>("/connection", { method: "POST", body: JSON.stringify({ action: "connect" }) }); setQr(data.qr); await reload(); })}>Conectar por QR</button>
-            <button className={button} disabled={busy || snapshot.sender?.provider === "evolution"} onClick={() => connectMeta("sender")}>Conectar API Oficial Meta</button>
-            <button className={button} disabled={busy} onClick={() => act(async () => { await api("/connection", { method: "POST", body: JSON.stringify({ action: "refresh" }) }); await reload(); })}>Verificar</button>
-            {snapshot.sender && <button className={button} disabled={busy} onClick={() => { if (window.confirm("Desconectar somente o WhatsApp testador?")) void act(async () => { await api("/connection", { method: "DELETE" }); setQr(null); await reload(); }); }}>Desconectar</button>}</div>
-          {qr && <div className="mt-4 rounded-xl bg-white p-4"><Image unoptimized src={qr} alt="QR privado para conectar o WhatsApp testador" width={240} height={240} className="mx-auto" /><button className="mt-2 text-sm text-black" onClick={() => setQr(null)}>Ocultar QR</button></div>}
-        </section>
-        <section className={card}><h2 className="text-sm text-white/55">Versão em avaliação</h2><p className="mt-2 break-all font-mono text-sm">{snapshot.sha}</p><p className="mt-3 text-sm text-white/50">Um resultado vale apenas para o código, cenário e configuração identificados naquela execução.</p></section>
-        <section className={card}><h2 className="text-sm text-white/55">Execuções e consumo</h2>
-          <p className="mt-2 text-3xl font-semibold">{snapshot.runs.length}</p>
-          <dl className="mt-3 space-y-1 text-sm text-white/60">
-            <div className="flex justify-between"><dt>Abertas agora</dt><dd>{snapshot.runs.filter(r => !["completed", "failed", "cancelled"].includes(r.status)).length}</dd></div>
-            <div className="flex justify-between"><dt>Falhas confirmadas</dt><dd>{snapshot.runs.filter(r => r.verdict === "failed").length}</dd></div>
-            <div className="flex justify-between"><dt>Bloqueios esperados</dt><dd>{snapshot.runs.filter(r => r.verdict === "expected_block").length}</dd></div>
-            <div className="flex justify-between"><dt>Inconclusivos</dt><dd>{snapshot.runs.filter(r => r.verdict === "inconclusive").length}</dd></div>
-            <div className="flex justify-between"><dt>Mensagens do testador</dt><dd>{snapshot.runs.reduce((total, r) => total + (r.sent_messages ?? 0), 0)}</dd></div>
-            <div className="flex justify-between"><dt>Consumo registrado</dt><dd>{money(snapshot.runs.reduce((total, r) => total + Number(r.spent_brl ?? 0), 0))}</dd></div>
-          </dl>
-          <p className="mt-3 text-xs text-white/45">Inconclusivo e não executado nunca contam como aprovado.</p></section>
-      </div>
-      <section className={card}><h2 className="mb-4 text-lg font-semibold">1. Escolha a forma de execução</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{LAB_MODES.map(item => <button key={item} aria-pressed={mode === item} onClick={() => { setMode(item); clearApproval(); }}
-          className={`rounded-xl border p-4 text-left ${mode === item ? "border-orange-500 bg-orange-500/10" : "border-white/10 hover:border-white/30"}`}>
-          <span className="font-medium">{LAB_MODE_LABELS[item]}</span><span className="mt-2 block text-xs leading-relaxed text-white/55">{modeDescription[item]}</span>
-          {!snapshot.capabilities.modes?.[item] && <span className="mt-2 block text-xs text-amber-400">
-            {isLabInternalMode(item) ? "Runner do GitHub não configurado" : "Em implementação · execução bloqueada"}</span>}</button>)}</div>
-      </section>
-      {!isLabInternalMode(mode) && <section className={card}><h2 className="mb-4 text-lg font-semibold">2. Agente e destino exatos</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          <label className="space-y-1 text-sm"><span>Ambiente</span><select className={field} value={targetKind} onChange={e => { setTargetKind(e.target.value as "copy" | "original"); clearApproval(); }}><option value="copy">Cópia isolada (padrão)</option><option value="original">Agente original — exige autorização por execução</option></select></label>
-          <label className="space-y-1 text-sm"><span>Cliente / tenant</span><select className={field} value={tenantId} onChange={e => { setTenantId(e.target.value); setAgentId(""); setConnectionId(""); setRuleId(""); clearApproval(); }}><option value="">Selecione</option>{snapshot.tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-          <label className="space-y-1 text-sm"><span>Agente</span><select className={field} value={agentId} onChange={e => { setAgentId(e.target.value); clearApproval(); }}><option value="">Selecione</option>{snapshot.agents.map(a => <option key={a.agent_id} value={a.agent_id}>{a.display_name}{a.active ? "" : " (inativo)"}</option>)}</select></label>
-          <label className="space-y-1 text-sm"><span>Conexão e canal</span><select className={field} value={connectionId} onChange={e => { setConnectionId(e.target.value); setRuleId(""); clearApproval(); }}><option value="">Selecione</option>{snapshot.connections.map(c => <option key={c.id} value={c.id}>{c.channel} · {c.number ?? "sem número confirmado"} · {c.state}</option>)}</select></label>
-          <label className="space-y-1 text-sm"><span>Regra de entrada</span><select className={field} value={ruleId} onChange={e => { setRuleId(e.target.value); clearApproval(); }}><option value="">Sem regra — somente teste de silêncio</option>{snapshot.rules.filter(r => r.connection_id === connectionId && r.agent_ids?.includes(agentId)).map(r => <option key={r.id} value={r.id}>{r.name}{r.active ? "" : " (inativa)"}</option>)}</select></label>
-          <label className="space-y-1 text-sm"><span>Formulário Meta (quando aplicável)</span><input className={field} value={formId} onChange={e => { setFormId(e.target.value); clearApproval(); }} placeholder="ID do formulário autorizado" /></label>
-        </div>
-        <p className="mt-4 text-sm text-white/50">Destino escolhido: {selectedAgent?.display_name ?? "nenhum agente"} · {selectedConnection?.number ?? "nenhum número"}. O número testador deve ser diferente.</p>
-        {targetKind === "copy" && <div className="mt-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4 text-sm">
-          <p className="font-medium">Número que a cópia atende</p>
-          <p className="mt-1 text-white/60">A cópia leva prompts e configuração, sem histórico, leads nem credenciais do cliente. Ela precisa da própria linha — diferente do número testador — e passa pelo recebimento real e pelas regras de verdade.</p>
-          <p className="mt-2 text-white/50">Estado: {receiver ? `${receiver.state}${receiver.number ? ` · ${receiver.number}` : ""}` : "não conectado"}</p>
-          {receiver?.provider && <p className="mt-1 text-xs text-sky-300">{receiver.provider === "meta_cloud" ? "API Oficial Meta" : "QR Code · Evolution"}</p>}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button className={button} disabled={busy || !tenantId || !agentId || receiver?.provider === "meta_cloud"} onClick={() => act(async () => {
-              const data = await api<{ qr: string | null; connection: typeof receiver; copy: { unavailable: { dependency: string; reason: string }[] } }>(
-                "/receiver", { method: "POST", body: JSON.stringify({ action: "connect", tenantId, agentId }) });
-              setReceiverQr(data.qr); setReceiver(data.connection);
-              setNotice(data.copy.unavailable.length
-                ? `Cópia criada. Dependências indisponíveis: ${data.copy.unavailable.map(item => item.dependency).join(", ")}.`
-                : "Cópia criada com todas as dependências disponíveis.");
-              clearApproval();
-            })}>Conectar cópia por QR</button>
-            <button className={button} disabled={busy || !tenantId || !agentId || receiver?.provider === "evolution"} onClick={() => connectMeta("receiver")}>Conectar cópia pela API Oficial Meta</button>
-            <button className={button} disabled={busy} onClick={() => act(async () => {
-              const data = await api<{ connection: typeof receiver }>("/receiver", { method: "POST", body: JSON.stringify({ action: "refresh" }) });
-              setReceiver(data.connection); })}>Verificar</button>
-            {receiver && <button className={button} disabled={busy} onClick={() => { if (window.confirm("Desconectar o número da cópia isolada?"))
-              void act(async () => { await api("/receiver", { method: "DELETE" }); setReceiver(null); setReceiverQr(null); }); }}>Desconectar</button>}
+
+      <section className={card}><AgentTestLabChecklist items={checklist} next={nextStep} /></section>
+
+      <Step id="lab-passo-conexao" index={1} title="Escolha a conexão do testador"
+        hint="É por esta linha que você escreve durante o teste. Ela nunca é a linha de um cliente, do agente do sistema ou dos alertas.">
+        <AgentTestLabConnectionCard role="tester" title="WhatsApp testador"
+          description="O número exclusivo do laboratório, usado só para escrever no teste."
+          connection={senderView} busy={busy} qr={qr} onHideQr={() => setQr(null)} unavailable={null}
+          pendingMeta={pendingMeta === "tester"} onOpenMeta={() => connectMeta("sender")}
+          onCancelPending={() => { setPendingMeta(null); void act(() => connectEvolution("tester")); }}
+          onChoose={provider => chooseProvider("tester", provider)}
+          onRefresh={() => act(async () => { await api("/connection", { method: "POST", body: JSON.stringify({ action: "refresh" }) }); await reload(); })}
+          onDisconnect={() => { if (window.confirm("Desconectar somente o WhatsApp testador do laboratório?"))
+            void act(async () => { await api("/connection", { method: "DELETE" }); setQr(null); setPendingMeta(null); await reload(); }); }} />
+      </Step>
+
+      {!isLabInternalMode(mode) && <>
+        <Step id="lab-passo-agente" index={2} title="Escolha o agente"
+          hint="A cópia isolada leva prompts e configuração, sem histórico, leads nem credenciais do cliente.">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([["copy", "Cópia isolada", "Recomendado. Nenhum dado real do cliente é alterado."],
+               ["original", "Agente original", "Produz efeitos reais: leads, agenda, follow-up e lembretes."]] as const).map(([value, label, hint]) =>
+              <button key={value} aria-pressed={targetKind === value} onClick={() => { setTargetKind(value); clearApproval(); }}
+                className={`rounded-xl border p-4 text-left ${targetKind === value ? "border-orange-500 bg-orange-500/10" : "border-white/10 hover:border-white/30"}`}>
+                <span className="font-medium">{label}</span><span className="mt-2 block text-xs leading-relaxed text-white/55">{hint}</span></button>)}
           </div>
-          {!tenantId || !agentId ? <p className="mt-2 text-xs text-amber-400">Escolha o cliente e o agente de origem antes de criar a cópia.</p> : null}
-          {receiverQr && <div className="mt-3 rounded-xl bg-white p-4"><Image unoptimized src={receiverQr} alt="QR privado para conectar o número da cópia isolada" width={240} height={240} className="mx-auto" /><button className="mt-2 text-sm text-black" onClick={() => setReceiverQr(null)}>Ocultar QR</button></div>}
-        </div>}
-        {targetKind === "original" && <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm"><p>O original pode gerar efeitos reais. Confirme somente os efeitos permitidos:</p><div className="my-3 flex flex-wrap gap-4">{["lead", "crm", "agenda", "follow_up", "reminder", "notifications", "external_api"].map(effect => <label key={effect}><input type="checkbox" checked={effects.includes(effect)} onChange={e => { setEffects(prev => e.target.checked ? [...prev, effect] : prev.filter(v => v !== effect)); setConfirmed(false); }} /> {effect}</label>)}</div><label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> Confirmo os efeitos nesta execução e o uso de contato exclusivo de teste.</label></div>}
-      </section>}
-      <section className={card}><h2 className="mb-4 text-lg font-semibold">{isLabInternalMode(mode) ? "2" : "3"}. Cenário e limites</h2><div className="grid gap-4 md:grid-cols-2">
-        <label className="space-y-1 text-sm"><span>Nome da execução</span><input className={field} value={name} onChange={e => setName(e.target.value)} maxLength={150} /></label>
-        <label className="space-y-1 text-sm"><span>Perfil</span><select className={field} value={profile} onChange={e => setProfile(e.target.value as typeof profile)}><option value="short">Curto e econômico · 6 mensagens / 20 min / R$ 5</option><option value="complete">Mais completo · 20 mensagens / 60 min / R$ 20</option><option value="custom">Personalizado com limites</option></select></label>
-        {profile === "custom" && <>{[["Mensagens", maxMessages, setMaxMessages], ["Minutos", maxMinutes, setMaxMinutes], ["Orçamento (R$)", budgetBrl, setBudgetBrl]].map(([label, value, setter]) => <label className="space-y-1 text-sm" key={String(label)}><span>{String(label)}</span><input type="number" min={1} className={field} value={Number(value)} onChange={e => (setter as (n: number) => void)(Number(e.target.value))} /></label>)}</>}
-        <label className="space-y-1 text-sm md:col-span-2"><span>Problema ou objetivo</span><textarea className={field} rows={2} value={goal} onChange={e => setGoal(e.target.value)} placeholder="Qual comportamento deve ser verificado?" maxLength={5000} /></label>
-        {!isLabInternalMode(mode) && <><label className="space-y-1 text-sm"><span>Idioma BCP-47</span><input className={field} value={language} onChange={e => setLanguage(e.target.value)} /></label>
-          {["autonomous", "simulation"].includes(mode) && <label className="space-y-1 text-sm"><span>Modelo escolhido para esta execução</span><input className={field} value={model} onChange={e => setModel(e.target.value)} placeholder="Selecione o modelo após configurar o provedor" /></label>}
-          {structuredScript === null ? <><label className="space-y-1 text-sm md:col-span-2"><span>Mensagens do roteiro (uma por linha)</span><textarea className={field} rows={4} value={script} onChange={e => { setScript(e.target.value); clearApproval(); }} maxLength={20000} /></label>
-          <label className="text-sm"><input type="checkbox" checked={expectSilence} onChange={e => { setExpectSilence(e.target.checked); clearApproval(); }} /> Esperar silêncio por ausência intencional de regra</label>
-          <button type="button" className={button} onClick={() => setStructuredScript(JSON.stringify(requestBody().scenario.steps, null, 2))}>Editar etapas completas, mídias e esperas</button></>
-          : <label className="space-y-1 text-sm md:col-span-2"><span>Etapas completas (JSON)</span><textarea className={`${field} font-mono`} rows={12} value={structuredScript} onChange={e => { setStructuredScript(e.target.value); clearApproval(); }} maxLength={1000000} />
-            <span className="block text-xs text-white/50">Mantém tipo, arquivo, espera e verificações de cada etapa. Espere com kind: wait e waitSeconds; use o assetId de um arquivo controlado para mídia. O servidor valida tudo antes de iniciar.</span></label>}
-          </>}
-      </div><p className="mt-4 text-xs text-white/50">Limite: {profileLimits.maxMessages} mensagens · {profileLimits.maxMinutes} minutos · {money(profileLimits.budgetBrl)} estimados. Anexos contam como mensagens. Tarifas informadas depois pelo provedor podem alterar o custo final.</p>
-        {!runnable && <p className="mt-4 text-sm text-amber-400">{isLabInternalMode(mode) ? "Configure o runner restrito do GitHub antes de iniciar." : labCodeLabel(snapshot.capabilities.realReason)}</p>}
-        <div className="mt-5 flex flex-wrap gap-3">
-          <button className={button} disabled={busy || (!script.trim() && !structuredScript)} onClick={() => act(async () => {
-            await api("/scenarios", { method: "POST", body: JSON.stringify({ scenario: requestBody().scenario }) });
-            setNotice("Roteiro salvo. Pode ser repetido depois com nova identificação de execução.");
-          })}>Salvar roteiro</button>
-          <button className={button} disabled={busy} onClick={() => act(async () => {
-            const data = await api<{ scenarios: { name: string; version: number; definition: LabScenarioV1 }[] }>("/scenarios");
-            const latest = data.scenarios[0];
-            if (!latest) { setNotice("Nenhum roteiro salvo ainda."); return; }
-            setName(latest.name); setGoal(latest.definition.goal); setLanguage(latest.definition.language);
-            setStructuredScript(JSON.stringify(latest.definition.steps, null, 2)); clearApproval();
-            setNotice(`Roteiro "${latest.name}" v${latest.version} carregado.`);
-          })}>Carregar último roteiro</button>
-          <button className={button} disabled={busy} onClick={() => act(async () => { const data = await api<{ checks: LabCheck[] }>("/preflight", { method: "POST", body: JSON.stringify(requestBody()) }); setChecks(data.checks); })}>Verificar pré-requisitos</button>
-          <button className={primary} disabled={busy || !runnable} onClick={() => act(async () => { const data = await api<{ ok: boolean; run: Run }>("/runs", { method: "POST", body: JSON.stringify(requestBody()) }); if (data.ok) { setNotice("Execução registrada. O runner trabalha separado da página."); await reload(); } })}>{busy ? "Processando…" : `Iniciar: ${LAB_MODE_LABELS[mode]}`}</button></div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm"><span>Cliente</span><select className={field} value={tenantId} onChange={e => { setTenantId(e.target.value); setAgentId(""); setConnectionId(""); setRuleId(""); clearApproval(); }}><option value="">Selecione</option>{snapshot.tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+            <label className="space-y-1 text-sm"><span>Agente</span><select className={field} value={agentId} onChange={e => { setAgentId(e.target.value); clearApproval(); }}><option value="">Selecione</option>{snapshot.agents.map(a => <option key={a.agent_id} value={a.agent_id}>{a.display_name}{a.active ? "" : " (inativo)"}</option>)}</select></label>
+          </div>
+          {targetKind === "original" && <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+            <p>O original pode gerar efeitos reais. Confirme somente os efeitos permitidos:</p>
+            <div className="my-3 flex flex-wrap gap-4">{["lead", "crm", "agenda", "follow_up", "reminder", "notifications", "external_api"].map(effect =>
+              <label key={effect}><input type="checkbox" checked={effects.includes(effect)} onChange={e => { setEffects(prev => e.target.checked ? [...prev, effect] : prev.filter(v => v !== effect)); setConfirmed(false); }} /> {effect}</label>)}</div>
+            <label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> Confirmo os efeitos nesta execução e o uso de contato exclusivo de teste.</label>
+          </div>}
+        </Step>
+
+        <Step id="lab-passo-numero" index={3} title="Escolha o número atendido"
+          hint="É a linha em que o agente recebe a conversa. Precisa ser diferente do número testador.">
+          {targetKind === "copy"
+            ? <AgentTestLabConnectionCard role="copy" title="Número que a cópia atende"
+                description="A cópia precisa da própria linha e passa pelo recebimento real e pelas regras de verdade."
+                connection={receiverView} busy={busy} qr={receiverQr} onHideQr={() => setReceiverQr(null)}
+                unavailable={copyUnavailable}
+                pendingMeta={pendingMeta === "copy"} onOpenMeta={() => connectMeta("receiver")}
+                onCancelPending={() => { setPendingMeta(null); void act(() => connectEvolution("copy")); }}
+                onChoose={provider => chooseProvider("copy", provider)}
+                onRefresh={() => act(async () => { const data = await api<{ connection: LabReceiver }>("/receiver", { method: "POST", body: JSON.stringify({ action: "refresh" }) }); setReceiver(data.connection); })}
+                onDisconnect={() => { if (window.confirm("Desconectar o número da cópia isolada do laboratório?"))
+                  void act(async () => { await api("/receiver", { method: "DELETE" }); setReceiver(null); setReceiverQr(null); setPendingMeta(null); }); }} />
+            : <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-1 text-sm"><span>Conexão e canal do cliente</span><select className={field} value={connectionId} onChange={e => { setConnectionId(e.target.value); setRuleId(""); clearApproval(); }}><option value="">Selecione</option>{snapshot.connections.map(c => <option key={c.id} value={c.id}>{LAB_PROVIDER_LABELS[c.channel]} · {c.number ?? "sem número confirmado"} · {c.state}</option>)}</select></label>
+              <label className="space-y-1 text-sm"><span>Regra de entrada</span><select className={field} value={ruleId} onChange={e => { setRuleId(e.target.value); clearApproval(); }}><option value="">Sem regra — somente teste de silêncio</option>{snapshot.rules.filter(r => r.connection_id === connectionId && r.agent_ids?.includes(agentId)).map(r => <option key={r.id} value={r.id}>{r.name}{r.active ? "" : " (inativa)"}</option>)}</select></label>
+              <p className="text-sm text-white/50 md:col-span-2">Destino escolhido: {selectedAgent?.display_name ?? "nenhum agente"} · {selectedConnection?.number ?? "nenhum número"}.</p>
+            </div>}
+        </Step>
+      </>}
+
+      <Step id="lab-passo-preflight" index={isLabInternalMode(mode) ? 2 : 4} title="Verifique os pré-requisitos"
+        hint="A verificação consulta o servidor: agente, conexão, regra, números e suíte interna na versão publicada.">
+        <button className={button} disabled={busy} onClick={() => act(async () => {
+          const data = await api<{ checks: LabCheck[] }>("/preflight", { method: "POST", body: JSON.stringify(requestBody()) });
+          setChecks(data.checks);
+          setNotice(data.checks.every(check => check.ok) ? "Todas as verificações passaram." : "Algumas verificações não passaram. Veja a lista abaixo.");
+        })}>Verificar pré-requisitos</button>
         {checks && <ul className="mt-4 space-y-2 text-sm">{checks.map(check => <li key={check.code} className={check.ok ? "text-emerald-400" : "text-amber-400"}>{check.ok ? "✓" : "!"} {check.detail}</li>)}</ul>}
-      </section>
-      <section className={card}><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Histórico e evidências</h2><button className={button} disabled={busy} onClick={() => act(() => reload())}>Atualizar lista</button></div>
+      </Step>
+
+      <Step id="lab-passo-iniciar" index={isLabInternalMode(mode) ? 3 : 5} title="Inicie a conversa"
+        hint={modeDescription[mode]}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-1 text-sm"><span>Nome da execução</span><input className={field} value={name} onChange={e => setName(e.target.value)} maxLength={150} /></label>
+          <label className="space-y-1 text-sm"><span>Perfil</span><select className={field} value={profile} onChange={e => setProfile(e.target.value as typeof profile)}><option value="short">Curto e econômico · 6 mensagens / 20 min / R$ 5</option><option value="complete">Mais completo · 20 mensagens / 60 min / R$ 20</option><option value="custom">Personalizado com limites</option></select></label>
+          <label className="space-y-1 text-sm md:col-span-2"><span>Problema ou objetivo</span><textarea className={field} rows={2} value={goal} onChange={e => setGoal(e.target.value)} placeholder="Qual comportamento deve ser verificado?" maxLength={5000} /></label>
+        </div>
+        <p className="mt-4 text-xs text-white/50">Limite: {profileLimits.maxMessages} mensagens · {profileLimits.maxMinutes} minutos · {money(profileLimits.budgetBrl)} estimados. Anexos contam como mensagens. Tarifas informadas depois pelo provedor podem alterar o custo final.</p>
+        {!runnable && <p className="mt-4 text-sm text-amber-400">{isLabInternalMode(mode) ? "Configure o runner restrito do GitHub antes de iniciar." : labCodeLabel(snapshot.capabilities.realReason)}</p>}
+        {runnable && !readyToStart && nextStep?.action && <p className="mt-4 text-sm text-amber-400">
+          {nextStep.detail} <a className="underline" href={`#${nextStep.action.anchor}`}>{nextStep.action.label}</a>
+        </p>}
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button className={primary} disabled={busy || !runnable} onClick={() => act(async () => { const data = await api<{ ok: boolean; run: Run }>("/runs", { method: "POST", body: JSON.stringify(requestBody()) }); if (data.ok) { setNotice("Execução registrada. O runner trabalha separado da página."); await reload(); } })}>{busy ? "Processando…" : `Iniciar: ${LAB_MODE_LABELS[mode]}`}</button>
+        </div>
+
+        <details className="mt-6 rounded-xl border border-white/10 p-4">
+          <summary className="cursor-pointer text-sm font-medium">Configurações avançadas: outras formas de execução, roteiro e limites</summary>
+          <div className="mt-4 space-y-5">
+            <div>
+              <h3 className="mb-3 text-sm font-medium text-white/70">Forma de execução</h3>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{LAB_MODES.map(item => <button key={item} aria-pressed={mode === item} onClick={() => { setMode(item); clearApproval(); }}
+                className={`rounded-xl border p-4 text-left ${mode === item ? "border-orange-500 bg-orange-500/10" : "border-white/10 hover:border-white/30"}`}>
+                <span className="font-medium">{LAB_MODE_LABELS[item]}</span><span className="mt-2 block text-xs leading-relaxed text-white/55">{modeDescription[item]}</span>
+                {!snapshot.capabilities.modes?.[item] && <span className="mt-2 block text-xs text-amber-400">
+                  {isLabInternalMode(item) ? "Runner do GitHub não configurado" : "Em implementação · execução bloqueada"}</span>}</button>)}</div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {profile === "custom" && <>{[["Mensagens", maxMessages, setMaxMessages], ["Minutos", maxMinutes, setMaxMinutes], ["Orçamento (R$)", budgetBrl, setBudgetBrl]].map(([label, value, setter]) => <label className="space-y-1 text-sm" key={String(label)}><span>{String(label)}</span><input type="number" min={1} className={field} value={Number(value)} onChange={e => (setter as (n: number) => void)(Number(e.target.value))} /></label>)}</>}
+              {!isLabInternalMode(mode) && <>
+                <label className="space-y-1 text-sm"><span>Idioma BCP-47</span><input className={field} value={language} onChange={e => setLanguage(e.target.value)} /></label>
+                {targetKind === "original" && <label className="space-y-1 text-sm"><span>Formulário Meta (quando aplicável)</span><input className={field} value={formId} onChange={e => { setFormId(e.target.value); clearApproval(); }} placeholder="ID do formulário autorizado" /></label>}
+                {["autonomous", "simulation"].includes(mode) && <label className="space-y-1 text-sm"><span>Modelo escolhido para esta execução</span><input className={field} value={model} onChange={e => setModel(e.target.value)} placeholder="Selecione o modelo após configurar o provedor" /></label>}
+                {structuredScript === null ? <>
+                  <label className="space-y-1 text-sm md:col-span-2"><span>Mensagens do roteiro (uma por linha)</span><textarea className={field} rows={4} value={script} onChange={e => { setScript(e.target.value); clearApproval(); }} maxLength={20000} /></label>
+                  <label className="text-sm"><input type="checkbox" checked={expectSilence} onChange={e => { setExpectSilence(e.target.checked); clearApproval(); }} /> Esperar silêncio por ausência intencional de regra</label>
+                  <button type="button" className={button} onClick={() => setStructuredScript(JSON.stringify(requestBody().scenario.steps, null, 2))}>Editar etapas completas, mídias e esperas</button>
+                </> : <label className="space-y-1 text-sm md:col-span-2"><span>Etapas completas (JSON)</span><textarea className={`${field} font-mono`} rows={12} value={structuredScript} onChange={e => { setStructuredScript(e.target.value); clearApproval(); }} maxLength={1000000} />
+                  <span className="block text-xs text-white/50">Mantém tipo, arquivo, espera e verificações de cada etapa. Espere com kind: wait e waitSeconds; use o assetId de um arquivo controlado para mídia. O servidor valida tudo antes de iniciar.</span></label>}
+              </>}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button className={button} disabled={busy || (!script.trim() && !structuredScript)} onClick={() => act(async () => {
+                await api("/scenarios", { method: "POST", body: JSON.stringify({ scenario: requestBody().scenario }) });
+                setNotice("Roteiro salvo. Pode ser repetido depois com nova identificação de execução.");
+              })}>Salvar roteiro</button>
+              <button className={button} disabled={busy} onClick={() => act(async () => {
+                const data = await api<{ scenarios: { name: string; version: number; definition: LabScenarioV1 }[] }>("/scenarios");
+                const latest = data.scenarios[0];
+                if (!latest) { setNotice("Nenhum roteiro salvo ainda."); return; }
+                setName(latest.name); setGoal(latest.definition.goal); setLanguage(latest.definition.language);
+                setStructuredScript(JSON.stringify(latest.definition.steps, null, 2)); clearApproval();
+                setNotice(`Roteiro "${latest.name}" v${latest.version} carregado.`);
+              })}>Carregar último roteiro</button>
+            </div>
+          </div>
+        </details>
+      </Step>
+
+      <section className={card}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Histórico e evidências</h2>
+          <button className={button} disabled={busy} onClick={() => act(() => reload())}>Atualizar lista</button>
+        </div>
+        <dl className="mb-4 grid gap-3 text-sm text-white/60 sm:grid-cols-3 lg:grid-cols-6">
+          <div><dt>Versão em avaliação</dt><dd className="break-all font-mono text-white/80">{snapshot.sha.slice(0, 12)}</dd></div>
+          <div><dt>Execuções</dt><dd className="text-white/80">{snapshot.runs.length}</dd></div>
+          <div><dt>Abertas agora</dt><dd className="text-white/80">{openRuns}</dd></div>
+          <div><dt>Falhas confirmadas</dt><dd className="text-white/80">{snapshot.runs.filter(r => r.verdict === "failed").length}</dd></div>
+          <div><dt>Inconclusivos</dt><dd className="text-white/80">{snapshot.runs.filter(r => r.verdict === "inconclusive").length}</dd></div>
+          <div><dt>Consumo registrado</dt><dd className="text-white/80">{money(snapshot.runs.reduce((total, r) => total + Number(r.spent_brl ?? 0), 0))}</dd></div>
+        </dl>
+        <p className="mb-4 text-xs text-white/45">Inconclusivo e não executado nunca contam como aprovado. Um resultado vale apenas para o código, cenário e configuração daquela execução.</p>
         {snapshot.runs.length === 0 ? <p className="text-sm text-white/50">Nenhuma execução registrada. Testes reais ainda não foram comprovados por esta central.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-white/50"><tr>{["Execução", "Versão", "Estado", "Resultado", "Consumo", ""].map((label, i) => <th key={i} className="pb-3 pr-4 font-medium">{label}</th>)}</tr></thead><tbody>{snapshot.runs.map(run => <tr key={run.id} className="border-t border-white/10"><td className="py-3 pr-4">{LAB_MODE_LABELS[run.mode]}<span className="block text-xs text-white/40">{new Date(run.created_at).toLocaleString()}</span></td><td className="font-mono">{run.deployed_sha.slice(0, 8)}</td><td>{LAB_STATUS_LABELS[run.status]}</td><td>{run.verdict ? LAB_VERDICT_LABELS[run.verdict] : "Em avaliação"}</td><td>{money(run.spent_brl)}</td><td><button className={button} onClick={() => act(async () => setDetail(await api<Detail>(`/runs/${run.id}`)))}>Abrir relatório</button></td></tr>)}</tbody></table></div>}
       </section>
     </>}
+
+    <dialog ref={switchDialogRef} onClose={() => setSwitchPlan(null)} className="w-[min(560px,95vw)] rounded-2xl border border-white/15 bg-[#151820] p-6 text-white backdrop:bg-black/70">
+      {switchPlan && <>
+        <h2 className="text-lg font-semibold">Trocar a conexão desta linha?</h2>
+        <p className="mt-3 text-sm">{switchPlan.confirmMessage}</p>
+        <p className="mt-3 text-sm text-white/55">Só a conexão desta linha do laboratório é desconectada. Números de clientes, do agente do sistema e dos alertas não são alterados.</p>
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          <button className={button} onClick={() => setSwitchPlan(null)}>Cancelar</button>
+          <button className={primary} disabled={busy} onClick={() => void runSwitch(switchPlan)}>
+            Desconectar e conectar por {LAB_PROVIDER_LABELS[switchPlan.target]}
+          </button>
+        </div>
+      </>}
+    </dialog>
+
     <dialog ref={dialogRef} onClose={() => setDetail(null)} className="w-[min(900px,95vw)] rounded-2xl border border-white/15 bg-[#151820] p-6 text-white backdrop:bg-black/70">
       {detail && <><div className="flex justify-between gap-4"><h2 className="text-lg font-semibold">Evidências da execução</h2><button className={button} onClick={() => setDetail(null)}>Fechar</button></div>
         <p className="mt-4 text-sm">{detail.run.verdict ? LAB_VERDICT_LABELS[detail.run.verdict] : LAB_STATUS_LABELS[detail.run.status]}</p>

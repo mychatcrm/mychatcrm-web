@@ -185,3 +185,39 @@ export async function disconnectLabSender() {
   }).eq("id", sender.id);
   if (saved.error) throw new Error("sender_archive_failed");
 }
+
+/**
+ * Any open run means messages may still be in flight on this line, so no
+ * provider swap is attempted while one exists. Scoped to the laboratory's own
+ * runs; customer, system-agent and alert connections are never consulted here.
+ */
+export async function assertNoOpenLabRuns(code: string) {
+  const runs = await createSupabaseServiceClient().from("agent_test_lab_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_admin_id", LAB_OWNER_ID).not("status", "in", "(completed,failed,cancelled)");
+  if (runs.error || runs.count !== 0) throw new Error(code);
+}
+
+/**
+ * Moves the tester line to the other provider. The current laboratory link is
+ * removed and its removal confirmed before anything new is opened, so a failed
+ * disconnect never leaves two live links or opens a signup on top of a stale one.
+ * Evolution finishes here with its QR; the Meta signup has to be opened from the
+ * browser, so this returns and the page continues the flow.
+ */
+export async function switchLabSenderProvider(target: "evolution" | "meta_cloud") {
+  const sender = await getLabSender();
+  if (sender && sender.provider === target) {
+    return { switched: false, connection: await inspectLabSender(), qr: null };
+  }
+  if (sender) {
+    await assertNoOpenLabRuns("sender_has_active_runs");
+    await labAudit("sender.provider_switch_requested", sender.id);
+    await disconnectLabSender();
+    if (await getLabSender()) throw new Error("sender_switch_unconfirmed");
+    await labAudit("sender.provider_switched", sender.id);
+  }
+  if (target === "evolution") return { switched: true, ...(await connectLabSender()) };
+  // The Meta credential only exists after the Embedded Signup returns a code.
+  return { switched: true, connection: null, qr: null };
+}

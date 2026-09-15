@@ -13,6 +13,7 @@ import { deleteWhatsAppCloudConnection, upsertWhatsAppCloudConnection } from "@/
 import { setSlotActiveProvider } from "@/lib/server/whatsapp-slot-provider";
 import { LAB_OWNER_ID, labMaskedJid, labPhoneJid } from "@/lib/agent-test-lab/policy";
 import { labAudit, labHash } from "./auth";
+import { assertNoOpenLabRuns } from "./connections";
 import { provisionLabIsolatedAgent, labTenantIdFor } from "./isolation";
 import type { LabMetaCredentials } from "./meta-onboarding";
 
@@ -328,4 +329,29 @@ export async function disconnectLabReceiver() {
   const archived = await sb.from("agent_test_lab_connections")
     .update({ state: "disconnected", access_token: null, archived_at: new Date().toISOString() }).eq("id", row.id);
   if (archived.error) throw new Error("receiver_archive_failed");
+}
+
+/**
+ * Moves the answering line to the other provider, mirroring the tester swap.
+ * Only the laboratory's own receiver link and its laboratory-tenant routing are
+ * touched; a customer's connection with the same provider is never removed.
+ */
+export async function switchLabReceiverProvider(
+  target: "evolution" | "meta_cloud",
+  sourceTenantId: string,
+  sourceAgentId: string,
+) {
+  const row = await getLabReceiverRow();
+  if (row && row.provider === target) {
+    return { switched: false, connection: await inspectLabReceiver(), qr: null, copy: null };
+  }
+  if (row) {
+    await assertNoOpenLabRuns("receiver_has_active_runs");
+    await labAudit("receiver.provider_switch_requested", row.id);
+    await disconnectLabReceiver();
+    if (await getLabReceiverRow()) throw new Error("receiver_switch_unconfirmed");
+    await labAudit("receiver.provider_switched", row.id);
+  }
+  if (target === "evolution") return { switched: true, ...(await connectLabReceiver(sourceTenantId, sourceAgentId)) };
+  return { switched: true, connection: null, qr: null, copy: null };
 }
