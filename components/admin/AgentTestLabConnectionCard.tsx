@@ -53,20 +53,23 @@ export function AgentTestLabConnectionCard({
       </p>
     </div>
 
+    {pendingMeta && <div role="status" className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-4 text-sm">
+      <p className="font-medium">Falta concluir a conexão com a Meta.</p>
+      <p className="mt-1 text-white/70">A conexão anterior desta linha já foi removida. Se a janela da Meta não abriu, permita popups e abra de novo.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button className={primary} disabled={busy} onClick={onOpenMeta}>Abrir conexão da Meta</button>
+        <button className={button} disabled={busy} onClick={onCancelPending}>Conectar por QR em vez disso</button>
+      </div>
+    </div>}
+
+    {/* Only the provider choice depends on the earlier steps. Checking and
+        disconnecting an existing line must never become unreachable. */}
     {unavailable
       ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
         <p>{unavailable.reason}</p>
         <a className={`${button} mt-3 inline-block`} href={`#${unavailable.action.anchor}`}>{unavailable.action.label}</a>
       </div>
       : <>
-        {pendingMeta && <div role="status" className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-4 text-sm">
-          <p className="font-medium">Falta concluir a conexão com a Meta.</p>
-          <p className="mt-1 text-white/70">A conexão anterior desta linha já foi removida. Se a janela da Meta não abriu, permita popups e abra de novo.</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button className={primary} disabled={busy} onClick={onOpenMeta}>Abrir conexão da Meta</button>
-            <button className={button} disabled={busy} onClick={onCancelPending}>Conectar por QR em vez disso</button>
-          </div>
-        </div>}
         <div className="grid gap-3 sm:grid-cols-2">
           {(["evolution", "meta_cloud"] as const).map(provider => {
             const active = connection?.provider === provider;
@@ -84,18 +87,19 @@ export function AgentTestLabConnectionCard({
             </div>;
           })}
         </div>
-        {connection?.provider === "meta_cloud" && <p className="text-xs text-amber-300">
-          A API Oficial só envia texto livre dentro da janela de 24 horas da Meta. Fora dela, a Meta exige um template aprovado.
-        </p>}
-        <div className="flex flex-wrap gap-2">
-          <button className={button} disabled={busy} onClick={onRefresh}>Verificar conexão</button>
-          {connection && <button className={button} disabled={busy} onClick={onDisconnect}>Desconectar</button>}
-        </div>
-        {qr && <div className="rounded-xl bg-white p-4">
-          <Image unoptimized src={qr} width={240} height={240} className="mx-auto"
-            alt={role === "tester" ? "QR privado para conectar o WhatsApp testador" : "QR privado para conectar o número da cópia isolada"} />
-          <button className="mt-2 text-sm text-black" onClick={onHideQr}>Ocultar QR</button>
-        </div>}
       </>}
+
+    {connection?.provider === "meta_cloud" && <p className="text-xs text-amber-300">
+      A API Oficial só envia texto livre dentro da janela de 24 horas da Meta. Fora dela, a Meta exige um template aprovado.
+    </p>}
+    <div className="flex flex-wrap gap-2">
+      <button className={button} disabled={busy} onClick={onRefresh}>Verificar conexão</button>
+      {connection && <button className={button} disabled={busy} onClick={onDisconnect}>Desconectar</button>}
+    </div>
+    {qr && <div className="rounded-xl bg-white p-4">
+      <Image unoptimized src={qr} width={240} height={240} className="mx-auto"
+        alt={role === "tester" ? "QR privado para conectar o WhatsApp testador" : "QR privado para conectar o número da cópia isolada"} />
+      <button className="mt-2 text-sm text-black" onClick={onHideQr}>Ocultar QR</button>
+    </div>}
   </div>;
 }
