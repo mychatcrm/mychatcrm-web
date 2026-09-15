@@ -69,8 +69,7 @@ export function AgentTestLabConnectionCard({
         <p>{unavailable.reason}</p>
         <a className={`${button} mt-3 inline-block`} href={`#${unavailable.action.anchor}`}>{unavailable.action.label}</a>
       </div>
-      : <>
-        <div className="grid gap-3 sm:grid-cols-2">
+      : <div className="grid gap-3 sm:grid-cols-2">
           {(["evolution", "meta_cloud"] as const).map(provider => {
             const active = connection?.provider === provider;
             return <div key={provider} aria-current={active ? "true" : undefined}
@@ -85,9 +84,8 @@ export function AgentTestLabConnectionCard({
                 {active ? (ready ? "Reconectar" : "Concluir conexão") : `Trocar para ${LAB_PROVIDER_LABELS[provider]}`}
               </button>
             </div>;
-          })}
-        </div>
-      </>}
+        })}
+      </div>}
 
     {connection?.provider === "meta_cloud" && <p className="text-xs text-amber-300">
       A API Oficial só envia texto livre dentro da janela de 24 horas da Meta. Fora dela, a Meta exige um template aprovado.

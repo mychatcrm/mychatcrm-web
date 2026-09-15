@@ -246,6 +246,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   }
 
   async function connectEvolution(role: LabRole) {
+    // Whatever happens next, this line is no longer waiting on a Meta signup.
+    setPendingMeta(current => current === role ? null : current);
     if (role === "tester") {
       const data = await api<{ qr: string | null }>("/connection", { method: "POST", body: JSON.stringify({ action: "connect" }) });
       setQr(data.qr); await reload();
@@ -298,6 +300,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
         setPendingMeta(plan.role); openMeta = true;
         setNotice(`${LAB_PROVIDER_LABELS[plan.from]} desconectado nesta linha do laboratório. Conclua a conexão na janela da Meta.`);
       } else {
+        setPendingMeta(current => current === plan.role ? null : current);
         setNotice(`Linha trocada para ${LAB_PROVIDER_LABELS.evolution}. Leia o QR para concluir.`);
       }
     } catch (err) {
