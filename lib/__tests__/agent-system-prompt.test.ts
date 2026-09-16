@@ -304,8 +304,12 @@ describe("buildAgentSystemPrompt", () => {
         },
       });
 
-      expect(prompt).toContain("calcule ambos no fuso configurado");
+      // O prompt não manda mais "calcular" dia da semana — foi essa instrução
+      // que abriu espaço para o modelo errar o dia e recusar data válida.
+      expect(prompt).not.toContain("calcule ambos no fuso configurado");
+      expect(prompt).toContain("NUNCA calcule dia da semana de cabeça");
       expect(prompt).toContain("cite somente a data completa");
+      expect(prompt).toContain("quando você RECUSA uma data");
       expect(prompt).not.toContain("Nunca ofereça dias fora desta lista");
       expect(prompt).not.toContain("slice(0, 6)");
     });

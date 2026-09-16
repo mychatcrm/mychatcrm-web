@@ -1,10 +1,47 @@
 import "server-only";
 
 import { parseTimezone } from "@/lib/agents/agent-datetime";
+import { resolveDateAnchorFromText } from "@/lib/server/agenda-datetime-parse";
 import { normalizeCanonicalWhatsAppPhone } from "@/lib/integrations/whatsapp-contact-identity";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+const WEEKDAY_NAMES_PT = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"] as const;
+const WEEKDAY_NAMES_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/**
+ * Dia da semana REAL da data que o cliente acabou de pedir, calculado pelo
+ * backend e entregue ao modelo como fato fechado.
+ *
+ * Existe por causa de um incidente real: o cliente pedia "dia 30", o modelo
+ * não tinha esse dia nos CALENDAR FACTS, calculava de cabeça, errava, e
+ * recusava a data com "não atendemos aos sábados" — sendo que 30/09/2026 é
+ * quarta-feira. O parser determinístico já resolvia a data corretamente; o
+ * modelo é que não recebia a resposta. Agora recebe, e não tem o que calcular.
+ *
+ * Só afirma calendário civil — nunca disponibilidade, política ou decisão de
+ * agendar. A janela configurada continua sendo dita pelo bloco da AGENDA.
+ */
+export function buildRequestedDateFactBlock(params: {
+  clientText: string | null | undefined;
+  timezone: string;
+  now?: Date;
+}): string | null {
+  const text = typeof params.clientText === "string" ? params.clientText.trim() : "";
+  if (!text) return null;
+  const timezone = parseTimezone(params.timezone);
+  const anchor = resolveDateAnchorFromText(text, timezone, params.now);
+  if (!anchor) return null;
+  const [day, month, year] = anchor.split("/").map(Number);
+  if (!day || !month || !year) return null;
+  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
+  return `REQUESTED DATE FACT (deterministic, computed by the backend from the customer's latest message — it is not a booking and not an availability statement)
+- Date requested: ${anchor} (${timezone}).
+- That date falls on weekday ${weekday} (0=Sunday..6=Saturday): ${WEEKDAY_NAMES_EN[weekday]} / ${WEEKDAY_NAMES_PT[weekday]}.
+- This is ground truth. Never state, imply or reason from a different weekday for this date, and never compute the weekday yourself.
+- If this date cannot be served, justify it with the configured availability window or a real conflict — never with an invented weekday.`;
+}
 
 const EVENT_SELECT = "id, title, start_at, end_at, status, location";
 const DEFAULT_EVENT_LIMIT = 3;

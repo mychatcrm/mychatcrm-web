@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { buildAgendaCalendarFacts } from "@/lib/agents/agenda-calendar-facts";
+import { AGENDA_CALENDAR_FACT_DAYS, buildAgendaCalendarFacts } from "@/lib/agents/agenda-calendar-facts";
 import { computeAgentResponseProcessorDeadline, reclaimStuckProcessingJobs } from "@/lib/server/agent-response-jobs";
 import { AGENDA_DATETIME_NEEDED_REPLY, localizeAgendaReply } from "@/lib/server/agent-cta-scheduler";
 
@@ -10,12 +10,18 @@ describe("seven-day incident regressions", () => {
       const facts = buildAgendaCalendarFacts(zone, new Date(instant))!;
       const data = JSON.parse(facts.slice(facts.indexOf("{")));
       expect(data.timezone).toBe(zone);
-      expect(data.days).toHaveLength(15);
+      expect(data.days).toHaveLength(AGENDA_CALENDAR_FACT_DAYS);
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(instant));
-      expect(data.days[0].date).toBe(today);
-      data.days.forEach((day: { date: string; weekday: number }, index: number) => {
+      // Formato compacto "YYYY-MM-DD:weekday": 60 dias custam menos contexto
+      // que os 15 antigos em objeto, e cobrem o horizonte real de agendamento.
+      const parsed = (data.days as string[]).map((entry) => {
+        const [date, weekday] = entry.split(":");
+        return { date: date!, weekday: Number(weekday) };
+      });
+      expect(parsed[0]!.date).toBe(today);
+      parsed.forEach((day, index) => {
         expect(new Date(day.date).getUTCDay()).toBe(day.weekday);
-        expect(Date.parse(day.date) - Date.parse(data.days[0].date)).toBe(index * 86400000);
+        expect(Date.parse(day.date) - Date.parse(parsed[0]!.date)).toBe(index * 86400000);
       });
       expect(facts).not.toMatch(/14:00|availableSlots|preferredSlot/);
     }

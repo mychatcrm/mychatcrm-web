@@ -18,7 +18,7 @@ import {
   buildLeadConversationMemory,
   type LeadMemorySourceOptions,
 } from "@/lib/server/lead-conversation-memory";
-import { buildAgentAgendaContextBlock } from "@/lib/server/agent-agenda-context";
+import { buildAgentAgendaContextBlock, buildRequestedDateFactBlock } from "@/lib/server/agent-agenda-context";
 import { resolveAgentTimezone } from "@/lib/agents/agent-datetime";
 import type { BurstResponseStrategy } from "@/lib/conversas/normalize-conversation-burst";
 import type { Agent } from "@/lib/types";
@@ -464,6 +464,17 @@ export async function generateAgentResponse(params: {
   const historyMessages = partitionedMessages.historyMessages;
   const tailMessages = partitionedMessages.currentMessages;
   const schedulingBlock = agendaContextBlock ?? params.schedulingContextBlock;
+  // Fato de calendário da data que o cliente acabou de pedir. Sem isto, uma
+  // data fora da janela de CALENDAR FACTS fazia o modelo calcular o dia da
+  // semana de cabeça — e errar, recusando data válida por "não atendemos
+  // nesse dia". Só entra quando há automação de agenda e uma data no texto.
+  const requestedDateFactBlock =
+    baseAgent.agendaAutomationEnabled === true
+      ? buildRequestedDateFactBlock({
+          clientText: latestUserMessage?.content ?? null,
+          timezone: resolveAgentTimezone(baseAgent),
+        })
+      : null;
   const auxiliaryData: UntrustedContextPart[] = [
     ...(runtimeForPrompt.lead || runtimeForPrompt.state || runtimeForPrompt.summary
       ? [
@@ -512,6 +523,7 @@ export async function generateAgentResponse(params: {
       technicalSystemPrompt: baseSystemPrompt,
       requiredSystemBlocks: [
         ...(schedulingBlock?.trim() ? [schedulingBlock] : []),
+        ...(requestedDateFactBlock ? [requestedDateFactBlock] : []),
         ...(externalLookupContract ? [externalLookupContract] : []),
         ...(options?.extraRequiredSystemBlocks ?? []),
       ],
@@ -586,13 +598,14 @@ export async function generateAgentResponse(params: {
         reply: currentPlan.reply,
         timezone,
         agendaDisponibilidade,
+        clientText: latestUserMessage?.content ?? null,
       });
       if (!check.ok) {
         const allowedWindow =
           agendaDisponibilidade?.ativo === true
             ? `Allowed ISO weekdays: ${agendaDisponibilidade.diasSemana.join(", ")}; local time window: ${agendaDisponibilidade.horaInicio}-${agendaDisponibilidade.horaFim}; timezone: ${timezone}.`
             : `Timezone: ${timezone}.`;
-        const correctionNote = `\n\nTECHNICAL AGENDA CORRECTION (${check.errorReason}). Structured value: action=${currentPlan.agenda.action}, date=${currentPlan.agenda.date ?? "null"}, time=${currentPlan.agenda.time ?? "null"}. The structured agenda action, its date/time, and every concrete date, time, or weekday written in reply must describe the same valid future slot. A reply that proposes a concrete slot MUST use propose_create or propose_reschedule, never none/list. none/list MUST contain null date, time, location, and eventId. Do not claim a weekday unless it is the real weekday of the selected date. Preserve the customer's instructions, language, tone, and business behavior. ${allowedWindow}`;
+        const correctionNote = `\n\nTECHNICAL AGENDA CORRECTION (${check.errorReason}). Structured value: action=${currentPlan.agenda.action}, date=${currentPlan.agenda.date ?? "null"}, time=${currentPlan.agenda.time ?? "null"}. The structured agenda action, its date/time, and every concrete date, time, or weekday written in reply must describe the same valid future slot. A reply that proposes a concrete slot MUST use propose_create or propose_reschedule, never none/list. none/list MUST contain null date, time, location, and eventId. Do not claim a weekday unless it is the real weekday of the selected date, taken from CALENDAR FACTS or REQUESTED DATE FACT — this applies to refusals too: never reject a date by asserting a weekday you computed yourself. Preserve the customer's instructions, language, tone, and business behavior. ${allowedWindow}`;
         const retryResult = await generateAIResponse({
           tenantId: params.tenantId.trim(),
           agentId: params.agentId.trim(),
@@ -621,6 +634,7 @@ export async function generateAgentResponse(params: {
               reply: retryPlan.reply,
               timezone,
               agendaDisponibilidade,
+              clientText: latestUserMessage?.content ?? null,
             })
           : { ok: false as const, errorReason: "agenda_reply_action_mismatch" as const };
 

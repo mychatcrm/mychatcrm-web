@@ -804,6 +804,19 @@ function normalizeCalendarText(value: string): string {
     .trim();
 }
 
+/**
+ * `Intl` só produz a forma longa ("sexta-feira"), mas o modelo escreve a curta
+ * o tempo todo ("cai numa sexta"). Sem estas, uma afirmação errada de dia da
+ * semana passava batida só por estar abreviada.
+ */
+const WEEKDAY_SHORT_ALIASES: ReadonlyArray<{ alias: string; weekday: number }> = [
+  { alias: "segunda", weekday: 1 },
+  { alias: "terca", weekday: 2 },
+  { alias: "quarta", weekday: 3 },
+  { alias: "quinta", weekday: 4 },
+  { alias: "sexta", weekday: 5 },
+];
+
 const WEEKDAY_ALIASES: ReadonlyArray<{ alias: string; weekday: number }> = (() => {
   const aliases = new Map<string, number>();
   const sunday = Date.UTC(2023, 0, 1, 12);
@@ -813,6 +826,9 @@ const WEEKDAY_ALIASES: ReadonlyArray<{ alias: string; weekday: number }> = (() =
       const alias = normalizeCalendarText(formatter.format(new Date(sunday + weekday * 86_400_000)));
       if (alias.length >= 2) aliases.set(alias, weekday);
     }
+  }
+  for (const { alias, weekday } of WEEKDAY_SHORT_ALIASES) {
+    if (!aliases.has(alias)) aliases.set(alias, weekday);
   }
   return [...aliases].map(([alias, weekday]) => ({ alias, weekday }));
 })();
@@ -836,6 +852,67 @@ function replyNumericDates(reply: string, planYear: string): string[] {
     dates.push(`${match[3]}/${match[2]}/${match[1]}`);
   }
   return dates;
+}
+
+/**
+ * Verbos que ATRIBUEM um dia da semana a uma data ("dia 30 cai num sábado").
+ *
+ * "e" fica deliberadamente de fora: sem acento, a cópula "é" e a conjunção "e"
+ * viram a mesma palavra, e "temos vaga dia 30 e sábado" é frase legítima. Por
+ * isso `é` é convertido em `eh` antes de dobrar os acentos — assim a cópula
+ * entra na lista sem arrastar a conjunção junto.
+ */
+const WEEKDAY_ATTRIBUTION_VERBS =
+  "eh|cai|caiu|caira|calha|sera|seria|fica|ficaria|foi|is|was|falls?|lands?|es|cae|caera|est|tombe|ist|fallt|wird|cade|sarebbe";
+
+function weekdayAliasGroup(weekday: number): string {
+  const aliases = WEEKDAY_ALIASES
+    .filter((entry) => entry.weekday === weekday)
+    .map((entry) => entry.alias.replace(/\s+/g, "[\\s-]*"))
+    .sort((a, b) => b.length - a.length);
+  return `(?:${aliases.join("|")})s?`;
+}
+
+/** "30/09", "30/09/2026", "2026-09-30", "dia 30", "30 de setembro". Nunca "10h30"/"10:30". */
+function dateMentionGroup(referenceDate: string): string {
+  const [day, month, year] = referenceDate.split("/");
+  return `(?:${day}[/-]${month}(?:[/-]${year})?|${year}-${month}-${day}|(?<![\\d:h])0?${Number(day)}(?![\\d:h]))`;
+}
+
+/**
+ * O modelo ATRIBUIU à data pedida um dia da semana que não é o dela?
+ *
+ * Detecta atribuição, não co-ocorrência. "Não atendemos aos sábados, mas dia 30
+ * temos horário" é verdade — política numa oração, data em outra — e precisa
+ * passar. Já "dia 30 cai num sábado" é a mentira que recusou lead real. Separar
+ * por frase não resolvia: uma vírgula juntava as duas coisas na mesma frase.
+ */
+function replyWeekdayContradictsDate(reply: string, referenceDate: string): boolean {
+  const actualWeekday = weekdayForAgendaDate(referenceDate);
+  if (actualWeekday == null) return false;
+  const text = reply
+    // `\b` não serve aqui: em JS a fronteira de palavra é ASCII, e "é" conta
+    // como não-word — `\bé\b` nunca casa. Lookaround de letra Unicode isola a
+    // cópula sem tocar em "café"/"você".
+    .replace(/(?<!\p{L})é(?!\p{L})/giu, " eh ")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase();
+  const date = dateMentionGroup(referenceDate);
+  const gap = "[^.!?\\n]{0,20}?";
+  for (let weekday = 0; weekday < 7; weekday++) {
+    if (weekday === actualWeekday) continue;
+    const day = weekdayAliasGroup(weekday);
+    const patterns = [
+      // data → verbo de atribuição → dia da semana
+      new RegExp(`${date}${gap}\\b(?:${WEEKDAY_ATTRIBUTION_VERBS})\\b${gap}${day}\\b`),
+      // dia da semana como aposto colado à data: "sábado, dia 30", "sábado (30/09)"
+      new RegExp(`${day}\\b\\s*[,(]?\\s*(?:que\\s+eh\\s+)?(?:o\\s+)?dia\\s+${date}`),
+      new RegExp(`${day}\\b\\s*\\(\\s*${date}`),
+    ];
+    if (patterns.some((pattern) => pattern.test(text))) return true;
+  }
+  return false;
 }
 
 function replyNumericTimes(reply: string): string[] {
@@ -862,6 +939,8 @@ export function checkAgentAgendaOutboundPlan(params: {
   reply: string;
   timezone: string;
   agendaDisponibilidade?: AgentAgendaDisponibilidade | null;
+  /** Mensagem do cliente neste turno — âncora de data quando o plano não tem uma. */
+  clientText?: string | null;
   now?: Date;
 }): AgentAgendaOutboundPlanCheck {
   const { plan } = params;
@@ -877,7 +956,20 @@ export function checkAgentAgendaOutboundPlan(params: {
   if ((plan.action === "none" || plan.action === "list") && visibleProposal) {
     return { ok: false, errorReason: "agenda_reply_action_mismatch" };
   }
-  if (action !== "create" && action !== "reschedule") return { ok: true };
+  if (action !== "create" && action !== "reschedule") {
+    // Recusar também é afirmar. Antes, a checagem de dia da semana vivia só no
+    // ramo de create/reschedule: o agente podia negar uma data perfeitamente
+    // atendida dizendo que ela "cai num sábado" e nada barrava, porque sem
+    // plan.date não havia o que comparar. A data que o cliente pediu vem do
+    // parser determinístico, que nunca erra o calendário.
+    const anchor = params.clientText?.trim()
+      ? resolveDateAnchorFromText(params.clientText, params.timezone, params.now)
+      : null;
+    if (anchor && replyWeekdayContradictsDate(params.reply, anchor)) {
+      return { ok: false, errorReason: "agenda_reply_weekday_mismatch" };
+    }
+    return { ok: true };
+  }
 
   const dateTimeCheck = checkAgendaPlanDateTime({
     date: plan.date,
@@ -3615,6 +3707,7 @@ async function resolveStructuredAgendaPlan(params: {
           reply: modelCleanForConfirm,
           timezone: params.timezone,
           agendaDisponibilidade: params.agendaDisponibilidade,
+          clientText: params.clientText,
         })
       : { ok: true as const };
     const keepNaturalProposal =
