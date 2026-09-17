@@ -52,8 +52,13 @@ export async function exchangeLabMetaCode(input: {
   longUrl.searchParams.set("fb_exchange_token", tokenData.access_token);
   const longRes = await fetch(longUrl, { signal: AbortSignal.timeout(10_000) });
   const longData = (await longRes.json().catch(() => ({}))) as TokenResponse;
-  if (!longRes.ok || !longData.access_token) throw new Error("meta_long_lived_token_required");
-  const accessToken = longData.access_token;
+  // Embedded Signup may already return a durable system-user token. Meta then
+  // rejects fb_exchange_token even though the original credential is valid.
+  // Match the proven /admin/system-agent flow: prefer the exchanged token, but
+  // verify and use the original token when no replacement is returned.
+  const accessToken = longRes.ok && longData.access_token
+    ? longData.access_token
+    : tokenData.access_token;
 
   const health = await checkWhatsAppCloudConnectionHealth({ phoneNumberId, accessToken });
   if (!health.ok || !health.displayPhoneNumber) throw new Error("meta_number_verification_failed");

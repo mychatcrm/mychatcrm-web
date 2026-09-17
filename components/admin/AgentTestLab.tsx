@@ -170,7 +170,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
   const nextStep = nextLabStep(checklist);
   const readyToStart = checklist.every(item => item.ok);
 
-  function connectMeta(purpose: "sender" | "receiver") {
+  function connectMeta(purpose: "sender" | "receiver", replaceExisting = false) {
     if (purpose === "receiver" && (!tenantId || !agentId)) {
       setError("Escolha o cliente e o agente antes de conectar a API Oficial na cópia.");
       return;
@@ -217,6 +217,7 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
               "/meta/exchange-code",
               { method: "POST", body: JSON.stringify({
                 purpose, code: response.authResponse.code, waba_id: wabaId, phone_number_id: phoneNumberId,
+                replace_existing: replaceExisting,
                 ...(purpose === "receiver" ? { tenantId, agentId } : {}),
               }) },
             );
@@ -280,10 +281,18 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     void act(() => connectEvolution(role));
   }
 
-  /** Runs a confirmed swap: remove this laboratory's link, then open the new one. */
+  /** Runs a confirmed swap without leaving the laboratory in a half-switched state. */
   async function runSwitch(plan: Extract<LabSwitchPlan, { kind: "switch" }>) {
-    setSwitchPlan(null); setBusy(true); setError(""); setNotice("");
-    let openMeta = false;
+    setSwitchPlan(null); setError(""); setNotice("");
+    // FB.login must be opened synchronously from this confirmation click.
+    // Waiting for /connection first loses the user gesture and browsers may
+    // block the popup. The backend replaces the old laboratory link only after
+    // Meta has returned and verified the new credential.
+    if (plan.target === "meta_cloud") {
+      connectMeta(plan.role === "tester" ? "sender" : "receiver", true);
+      return;
+    }
+    setBusy(true);
     try {
       if (plan.role === "tester") {
         const data = await api<{ switched: boolean; qr: string | null }>("/connection",
@@ -296,13 +305,8 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
       }
       await Promise.all([reload(), reloadReceiver()]);
       clearApproval();
-      if (plan.target === "meta_cloud") {
-        setPendingMeta(plan.role); openMeta = true;
-        setNotice(`${LAB_PROVIDER_LABELS[plan.from]} desconectado nesta linha do laboratório. Conclua a conexão na janela da Meta.`);
-      } else {
-        setPendingMeta(current => current === plan.role ? null : current);
-        setNotice(`Linha trocada para ${LAB_PROVIDER_LABELS.evolution}. Leia o QR para concluir.`);
-      }
+      setPendingMeta(current => current === plan.role ? null : current);
+      setNotice(`Linha trocada para ${LAB_PROVIDER_LABELS.evolution}. Leia o QR para concluir.`);
     } catch (err) {
       // A disconnect that did not complete never opens a new connection.
       showError(err);
@@ -310,7 +314,6 @@ export function AgentTestLab({ enabled }: { enabled: boolean }) {
     } finally {
       setBusy(false);
     }
-    if (openMeta) connectMeta(plan.role === "tester" ? "sender" : "receiver");
   }
 
   const copyUnavailable = !tenantId || !agentId
