@@ -81,7 +81,10 @@ export function AgentTestLabConnectionCard({
               <p className="mt-2 text-xs leading-relaxed text-white/55">{PROVIDER_HINTS[provider]}</p>
               <button className={`${active ? button : primary} mt-3 w-full`} disabled={busy}
                 onClick={() => onChoose(provider)}>
-                {active ? (ready ? "Reconectar" : "Concluir conexão") : `Trocar para ${LAB_PROVIDER_LABELS[provider]}`}
+                {active
+                  ? provider === "evolution" && !ready ? "Gerar QR Code" : ready ? "Verificar novamente" : "Concluir conexão"
+                  : connection ? `Trocar para ${LAB_PROVIDER_LABELS[provider]}`
+                    : provider === "evolution" ? "Conectar por QR Code" : "Conectar pela API Oficial Meta"}
               </button>
             </div>;
         })}

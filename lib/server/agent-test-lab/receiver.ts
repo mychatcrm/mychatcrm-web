@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import {
   evolutionCreateInstance, evolutionFetchInstances, evolutionInstanceConnect,
-  evolutionDeleteInstance, evolutionLogoutInstance, isEvolutionApiConfigured,
+  evolutionRemoveInstanceCompletely, evolutionLogoutInstance, isEvolutionApiConfigured,
   applyClientEvolutionInstanceSettings, CLIENT_EVOLUTION_INSTANCE_SETTINGS,
 } from "@/lib/integrations/evolution-api";
 import { buildEvolutionWebhookUrl } from "@/lib/integrations/evolution-webhook-url";
@@ -19,6 +19,11 @@ import type { LabMetaCredentials } from "./meta-onboarding";
 
 export const LAB_RECEIVER_PREFIX = "mychatcrm-lab-receiver-";
 export const LAB_META_RECEIVER_PREFIX = "mychatcrm-lab-meta-receiver-";
+const LAB_QR_IMAGE = /^data:image\/(png|jpeg);base64,[a-z0-9+/=\s]+$/i;
+function labQr(payload: unknown): string | null {
+  const qr = normalizeInstanceConnectToQrDataUrl(payload);
+  return qr && LAB_QR_IMAGE.test(qr) ? qr : null;
+}
 
 async function getLabReceiverRow() {
   const result = await createSupabaseServiceClient().from("agent_test_lab_connections")
@@ -87,8 +92,8 @@ async function refreshReceiver() {
     return { ...row, state, wa_jid: state === "conflict" ? null : jid };
   }
   const result = await evolutionFetchInstances(row.instance_name);
-  if (!result.ok) throw new Error("receiver_provider_unavailable");
-  const exact = result.data.find(item => item.name === row.instance_name);
+  if (!result.ok && result.status !== 404) throw new Error("receiver_provider_unavailable");
+  const exact = result.ok ? result.data.find(item => item.name === row.instance_name) : undefined;
   const jid = labPhoneJid(exact?.ownerJid);
   let state = exact?.connectionStatus === "open" && jid ? "open" : exact ? "connecting" : "absent";
   const sb = createSupabaseServiceClient();
@@ -149,7 +154,15 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
       throw new Error("receiver_target_mismatch");
     }
   }
+  if (row) {
+    const refreshed = await refreshReceiver();
+    if (refreshed?.state === "absent") {
+      await disconnectLabReceiver();
+      row = null;
+    }
+  }
   const copy = await provisionLabIsolatedAgent(sourceTenantId, sourceAgentId);
+  let createQr: string | null = null;
 
   if (!row) {
     const id = randomUUID();
@@ -165,6 +178,7 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
       settings: { ...CLIENT_EVOLUTION_INSTANCE_SETTINGS },
     });
     if (!created.ok) throw new Error("receiver_creation_unconfirmed");
+    createQr = labQr(created.data);
     // /instance/create does not always persist inline settings.
     await applyClientEvolutionInstanceSettings(instanceName);
 
@@ -192,6 +206,17 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
       : await sb.from("lead_distribution_rules").insert(ruleRow);
     if (rule.error) throw new Error("receiver_rule_failed");
     row = await getLabReceiverRow();
+    if (!createQr) {
+      const initialConnect = await evolutionInstanceConnect(instanceName);
+      if (initialConnect.ok) createQr = labQr(initialConnect.data);
+    }
+  }
+
+  if (createQr && row) {
+    const saved = await sb.from("agent_test_lab_connections")
+      .update({ state: "connecting", updated_at: new Date().toISOString() }).eq("id", row.id).is("archived_at", null);
+    if (saved.error) throw new Error("receiver_update_failed");
+    return { connection: await inspectLabReceiver(), qr: createQr, copy };
   }
 
   const refreshed = await refreshReceiver();
@@ -201,8 +226,8 @@ export async function connectLabReceiver(sourceTenantId: string, sourceAgentId: 
 
   const qrResult = await evolutionInstanceConnect(refreshed.instance_name);
   if (!qrResult.ok) throw new Error("receiver_qr_unavailable");
-  const qr = normalizeInstanceConnectToQrDataUrl(qrResult.data);
-  if (!qr || !/^data:image\/(png|jpeg);base64,[a-z0-9+/=\s]+$/i.test(qr)) throw new Error("receiver_qr_unavailable");
+  const qr = labQr(qrResult.data);
+  if (!qr) throw new Error("receiver_qr_unavailable");
   return { connection: await inspectLabReceiver(), qr, copy };
 }
 
@@ -314,10 +339,8 @@ export async function disconnectLabReceiver() {
   if (row.provider === "meta_cloud") {
     if (existingRoute?.labTenantId) await deleteWhatsAppCloudConnection(existingRoute.labTenantId, 0);
   } else {
-    await evolutionLogoutInstance(row.instance_name);
-    await evolutionDeleteInstance(row.instance_name);
-    const inventory = await evolutionFetchInstances(row.instance_name);
-    if (!inventory.ok || inventory.data.some(item => item.name === row.instance_name)) throw new Error("receiver_removal_unconfirmed");
+    const removal = await evolutionRemoveInstanceCompletely(row.instance_name);
+    if (!removal.verifiedAbsent) throw new Error("receiver_removal_unconfirmed");
     const routing = await sb.from("tenant_evolution_instances").delete().eq("instance_name", row.instance_name);
     if (routing.error) throw new Error("receiver_routing_cleanup_failed");
   }

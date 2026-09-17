@@ -2,7 +2,7 @@ import "server-only";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { evolutionCreateInstance, evolutionFetchInstances, evolutionInstanceConnect,
-  evolutionDeleteInstance, evolutionLogoutInstance, isEvolutionApiConfigured } from "@/lib/integrations/evolution-api";
+  evolutionRemoveInstanceCompletely, evolutionLogoutInstance, isEvolutionApiConfigured } from "@/lib/integrations/evolution-api";
 import { normalizeInstanceConnectToQrDataUrl } from "@/lib/integrations/evolution-connect-qr";
 import { checkWhatsAppCloudConnectionHealth } from "@/lib/integrations/whatsapp-cloud";
 import { LAB_INSTANCE_PREFIX, LAB_OWNER_ID, labMaskedJid, labPhoneJid } from "@/lib/agent-test-lab/policy";
@@ -10,6 +10,11 @@ import { labAudit, labHash } from "./auth";
 import type { LabMetaCredentials } from "./meta-onboarding";
 
 const LAB_META_SENDER_PREFIX = "mychatcrm-lab-meta-sender-";
+const LAB_QR_IMAGE = /^data:image\/(png|jpeg);base64,[a-z0-9+/=\s]+$/i;
+function labQr(payload: unknown): string | null {
+  const qr = normalizeInstanceConnectToQrDataUrl(payload);
+  return qr && LAB_QR_IMAGE.test(qr) ? qr : null;
+}
 
 export async function getLabSender() {
   const result = await createSupabaseServiceClient().from("agent_test_lab_connections")
@@ -61,9 +66,11 @@ async function refreshSender() {
     return { ...sender, state, wa_jid: state === "conflict" ? null : jid };
   }
   const result = await evolutionFetchInstances(sender.instance_name);
-  if (!result.ok) throw new Error("sender_provider_unavailable");
+  // Evolution returns 404 for an exact instance that no longer exists. This is
+  // a recoverable stale lab reservation, not an outage of the provider.
+  if (!result.ok && result.status !== 404) throw new Error("sender_provider_unavailable");
   // Never use pickEvolutionInstanceInfo's single-item fallback for lab identity.
-  const exact = result.data.find(row => row.name === sender.instance_name);
+  const exact = result.ok ? result.data.find(row => row.name === sender.instance_name) : undefined;
   const jid = labPhoneJid(exact?.ownerJid);
   let state = exact?.connectionStatus === "open" && jid ? "open" : exact ? "connecting" : "absent";
   const sb = createSupabaseServiceClient();
@@ -86,6 +93,15 @@ export async function connectLabSender() {
   if (!isEvolutionApiConfigured()) throw new Error("evolution_not_configured");
   let sender = await getLabSender();
   if (sender?.provider === "meta_cloud") throw new Error("sender_other_provider_connected");
+  if (sender) {
+    sender = await refreshSender();
+    if (sender?.state === "absent") {
+      // Only the exact laboratory instance is considered, and disconnect
+      // verifies absence and open runs before releasing the stale reservation.
+      await disconnectLabSender();
+      sender = null;
+    }
+  }
   if (!sender) {
     const base = process.env.AGENT_TEST_LAB_PUBLIC_URL;
     if (!base || new URL(base).protocol !== "https:" || new URL(base).username || new URL(base).password) throw new Error("lab_webhook_url_missing");
@@ -107,16 +123,30 @@ export async function connectLabSender() {
       syncFullHistory: false, groupsIgnore: true, readMessages: false, readStatus: false, alwaysOnline: true, rejectCall: true,
     } });
     if (!created.ok) throw new Error("sender_creation_unconfirmed");
+    // The create response is authoritative for a new QR. If it has not been
+    // emitted yet, ask the same instance directly before an inventory read:
+    // the filtered inventory can briefly report 404 while creation settles.
+    let createQr = labQr(created.data);
+    if (!createQr) {
+      const initialConnect = await evolutionInstanceConnect(instanceName);
+      if (initialConnect.ok) createQr = labQr(initialConnect.data);
+    }
+    if (createQr) {
+      const saved = await createSupabaseServiceClient().from("agent_test_lab_connections")
+        .update({ state: "connecting", updated_at: new Date().toISOString() }).eq("id", id).is("archived_at", null);
+      if (saved.error) throw new Error("sender_update_failed");
+      return { connection: await inspectLabSender(), qr: createQr };
+    }
     sender = await refreshSender();
-  } else sender = await refreshSender();
+  }
   if (!sender || sender.state === "absent") throw new Error("sender_missing_review_required");
   if (sender.state === "conflict") throw new Error("sender_number_already_in_use");
   if (sender.state === "open") return { connection: await inspectLabSender(), qr: null };
   const qrResult = await evolutionInstanceConnect(sender.instance_name);
   if (!qrResult.ok) throw new Error("sender_qr_unavailable");
-  const qr = normalizeInstanceConnectToQrDataUrl(qrResult.data);
+  const qr = labQr(qrResult.data);
   // Do not cause the browser to fetch an arbitrary remote QR URL.
-  if (!qr || !/^data:image\/(png|jpeg);base64,[a-z0-9+/=\s]+$/i.test(qr)) throw new Error("sender_qr_unavailable");
+  if (!qr) throw new Error("sender_qr_unavailable");
   return { connection: await inspectLabSender(), qr };
 }
 
@@ -173,10 +203,8 @@ export async function disconnectLabSender() {
   await labAudit("sender.disconnect_requested", sender.id);
   if (sender.provider === "evolution") {
     // Exact registered name only, no system-agent reset and no inventory sweep.
-    await evolutionLogoutInstance(sender.instance_name);
-    await evolutionDeleteInstance(sender.instance_name);
-    const inventory = await evolutionFetchInstances(sender.instance_name);
-    if (!inventory.ok || inventory.data.some(row => row.name === sender.instance_name)) throw new Error("sender_removal_unconfirmed");
+    const removal = await evolutionRemoveInstanceCompletely(sender.instance_name);
+    if (!removal.verifiedAbsent) throw new Error("sender_removal_unconfirmed");
   }
   // Meta remains registered with the customer's WABA, but its credential is
   // removed from the laboratory immediately and future webhooks are ignored.

@@ -7,7 +7,7 @@ const m = vi.hoisted(() => ({
   calls: [] as { table: string; method: string; args: unknown[] }[],
   audit: vi.fn(),
   evoConfigured: vi.fn(), evoCreate: vi.fn(), evoFetch: vi.fn(), evoConnect: vi.fn(),
-  evoDelete: vi.fn(), evoLogout: vi.fn(), cloudHealth: vi.fn(),
+  evoDelete: vi.fn(), evoRemove: vi.fn(), evoLogout: vi.fn(), cloudHealth: vi.fn(),
   provision: vi.fn(), applySettings: vi.fn(), upsertCloud: vi.fn(), deleteCloud: vi.fn(), setProvider: vi.fn(),
 }));
 
@@ -27,10 +27,11 @@ vi.mock("@/lib/server/agent-test-lab/auth", () => ({ labAudit: m.audit, labHash:
 vi.mock("@/lib/integrations/evolution-api", () => ({
   isEvolutionApiConfigured: m.evoConfigured, evolutionCreateInstance: m.evoCreate, evolutionFetchInstances: m.evoFetch,
   evolutionInstanceConnect: m.evoConnect, evolutionDeleteInstance: m.evoDelete, evolutionLogoutInstance: m.evoLogout,
+  evolutionRemoveInstanceCompletely: m.evoRemove,
   applyClientEvolutionInstanceSettings: m.applySettings, CLIENT_EVOLUTION_INSTANCE_SETTINGS: {},
 }));
 vi.mock("@/lib/integrations/evolution-connect-qr", () => ({
-  normalizeInstanceConnectToQrDataUrl: () => "data:image/png;base64,QUJD",
+  normalizeInstanceConnectToQrDataUrl: (payload: { qr?: string }) => payload?.qr ?? null,
 }));
 vi.mock("@/lib/integrations/evolution-webhook-url", () => ({ buildEvolutionWebhookUrl: () => "https://lab.invalid/hook" }));
 vi.mock("@/lib/integrations/whatsapp-cloud", () => ({ checkWhatsAppCloudConnectionHealth: m.cloudHealth }));
@@ -43,7 +44,7 @@ vi.mock("@/lib/server/agent-test-lab/isolation", () => ({
   labTenantIdFor: (tenantId: string, agentId: string) => `tenant-lab-${tenantId}-${agentId}`,
 }));
 
-import { switchLabSenderProvider, connectLabMetaSender } from "@/lib/server/agent-test-lab/connections";
+import { switchLabSenderProvider, connectLabMetaSender, connectLabSender } from "@/lib/server/agent-test-lab/connections";
 import { switchLabReceiverProvider } from "@/lib/server/agent-test-lab/receiver";
 
 const EVOLUTION_SENDER = { id: "sender-1", instance_name: "mychatcrm-lab-sender-1", provider: "evolution",
@@ -74,8 +75,9 @@ beforeEach(() => {
   process.env.EVOLUTION_WEBHOOK_SECRET = "secret";
   m.evoConfigured.mockReturnValue(true);
   m.evoCreate.mockResolvedValue({ ok: true, data: {} });
-  m.evoConnect.mockResolvedValue({ ok: true, data: {} });
+  m.evoConnect.mockResolvedValue({ ok: true, data: { qr: "data:image/png;base64,QUJD" } });
   m.evoDelete.mockResolvedValue({ ok: true });
+  m.evoRemove.mockResolvedValue({ verifiedAbsent: true });
   m.evoLogout.mockResolvedValue({ ok: true });
   m.applySettings.mockResolvedValue({ ok: true });
   m.upsertCloud.mockResolvedValue({ error: null });
@@ -95,9 +97,7 @@ describe("tester line: Evolution to Meta", () => {
       ? connectionRow(EVOLUTION_SENDER)() : { data: null, error: null });
     const result = await switchLabSenderProvider("meta_cloud");
     expect(result).toEqual({ switched: true, connection: null, qr: null });
-    expect(m.evoLogout).toHaveBeenCalledWith("mychatcrm-lab-sender-1");
-    expect(m.evoDelete).toHaveBeenCalledWith("mychatcrm-lab-sender-1");
-    expect(m.evoDelete).toHaveBeenCalledTimes(1);
+    expect(m.evoRemove).toHaveBeenCalledWith("mychatcrm-lab-sender-1");
     expect(m.audit.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
       "sender.provider_switch_requested", "sender.disconnect_requested", "sender.provider_switched",
     ]));
@@ -113,7 +113,7 @@ describe("tester line: Evolution to Meta", () => {
   });
   it("does not open a new connection when the disconnect is not confirmed", async () => {
     m.read.mockImplementation(table => table === "agent_test_lab_connections" ? { data: EVOLUTION_SENDER, error: null } : { data: null, error: null });
-    m.evoFetch.mockResolvedValue({ ok: true, data: [{ name: "mychatcrm-lab-sender-1", connectionStatus: "open" }] });
+    m.evoRemove.mockResolvedValue({ verifiedAbsent: false });
     await expect(switchLabSenderProvider("meta_cloud")).rejects.toThrow("sender_removal_unconfirmed");
     expect(archivedConnections()).toHaveLength(0);
     expect(m.evoCreate).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("tester line: Meta to Evolution", () => {
     expect(result.switched).toBe(true);
     expect(result.qr).toBe("data:image/png;base64,QUJD");
     // A Meta number stays registered with its WABA; only the laboratory copy goes.
-    expect(m.evoLogout).not.toHaveBeenCalledWith("mychatcrm-lab-meta-sender-1");
+    expect(m.evoRemove).not.toHaveBeenCalledWith("mychatcrm-lab-meta-sender-1");
     expect(m.evoCreate).toHaveBeenCalledTimes(1);
     expect(m.audit.mock.calls.map(call => call[0])).toContain("sender.provider_switched");
   });
@@ -151,6 +151,48 @@ describe("tester line: Meta to Evolution", () => {
     expect(result.switched).toBe(false);
     expect(m.evoLogout).not.toHaveBeenCalled();
     expect(archivedConnections()).toHaveLength(0);
+  });
+});
+
+describe("tester line: QR recovery", () => {
+  it("uses the QR returned by instance creation without requiring a second provider call", async () => {
+    const created = { ...EVOLUTION_SENDER, id: "sender-2", state: "connecting", wa_jid: null };
+    m.read.mockImplementation(table => table === "agent_test_lab_connections"
+      ? { data: m.calls.some(call => call.table === "agent_test_lab_connections" && call.method === "insert") ? created : null, error: null }
+      : { data: null, error: null });
+    m.evoCreate.mockResolvedValue({ ok: true, data: { qr: "data:image/png;base64,QUJD" } });
+
+    const result = await connectLabSender();
+    expect(result.qr).toBe("data:image/png;base64,QUJD");
+    expect(m.evoConnect).not.toHaveBeenCalled();
+    expect(m.evoFetch).not.toHaveBeenCalled();
+  });
+
+  it("asks the newly created instance for its QR before reading an eventually consistent inventory", async () => {
+    const created = { ...EVOLUTION_SENDER, id: "sender-2", state: "connecting", wa_jid: null };
+    m.read.mockImplementation(table => table === "agent_test_lab_connections"
+      ? { data: m.calls.some(call => call.table === "agent_test_lab_connections" && call.method === "insert") ? created : null, error: null }
+      : { data: null, error: null });
+    const result = await connectLabSender();
+    expect(result.qr).toBe("data:image/png;base64,QUJD");
+    expect(m.evoConnect).toHaveBeenCalledTimes(1);
+    expect(m.evoFetch).not.toHaveBeenCalled();
+  });
+
+  it("releases an exact missing laboratory instance and creates a fresh QR", async () => {
+    const fresh = { ...EVOLUTION_SENDER, id: "sender-2", state: "connecting", wa_jid: null };
+    m.read.mockImplementation(table => {
+      if (table !== "agent_test_lab_connections") return { data: null, error: null };
+      if (!archivedConnections().length) return { data: EVOLUTION_SENDER, error: null };
+      return { data: m.calls.some(call => call.table === "agent_test_lab_connections" && call.method === "insert") ? fresh : null, error: null };
+    });
+    m.evoFetch.mockResolvedValue({ ok: false, status: 404, error: "not found" });
+    m.evoCreate.mockResolvedValue({ ok: true, data: { qr: "data:image/png;base64,QUJD" } });
+
+    const result = await connectLabSender();
+    expect(result.qr).toBe("data:image/png;base64,QUJD");
+    expect(m.evoRemove).toHaveBeenCalledWith(EVOLUTION_SENDER.instance_name);
+    expect(m.evoCreate).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -207,7 +249,7 @@ describe("isolated copy line", () => {
     });
     const result = await switchLabReceiverProvider("meta_cloud", "t1", "a1");
     expect(result).toMatchObject({ switched: true, connection: null, qr: null, copy: null });
-    expect(m.evoDelete).toHaveBeenCalledWith("mychatcrm-lab-receiver-1");
+    expect(m.evoRemove).toHaveBeenCalledWith("mychatcrm-lab-receiver-1");
     expect(m.upsertCloud).not.toHaveBeenCalled();
   });
   it("refuses to swap the copy line while a test is open", async () => {
