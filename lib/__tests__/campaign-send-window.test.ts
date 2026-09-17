@@ -130,6 +130,25 @@ describe("contrato: janela e cron", () => {
     expect(outros).not.toContain(omni?.schedule);
   });
 
+  it("no máximo 2 crons — acima disso o Hobby simplesmente não dispara os excedentes", () => {
+    // Incidente de 17/09: o vercel.json tinha 13 crons num plano que aceita 2.
+    // Diferente da frequência (que derruba o deploy e aparece na hora), o
+    // excesso de QUANTIDADE falha em silêncio: o deploy passa verde e os
+    // agendamentos excedentes nunca rodam. Ficou assim por semanas até o
+    // Healthchecks acusar evolution/reconcile, meta-connections e omnichannel.
+    //
+    // Este teste existe porque o outro cobre só a frequência. Se precisar de
+    // mais de 2 agendamentos, use pg_cron do Supabase (ver docs/vercel-crons.md)
+    // ou suba para o plano Pro — não acrescente aqui.
+    const vercel = JSON.parse(source("vercel.json")) as {
+      crons: Array<{ path: string; schedule: string }>;
+    };
+    expect(
+      vercel.crons.length,
+      `vercel.json tem ${vercel.crons.length} crons; o plano Hobby dispara no máximo 2`,
+    ).toBeLessThanOrEqual(2);
+  });
+
   it("TODO cron é diário — o plano Hobby recusa o DEPLOY se não for", () => {
     // Aprendido na marra: um `0 * * * *` fez o deploy do eb903e2 falhar ANTES
     // de virar build, e a produção ficou presa no commit anterior sem aviso
