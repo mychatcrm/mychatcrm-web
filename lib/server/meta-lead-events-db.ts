@@ -41,6 +41,8 @@ export const META_LEAD_EVENT_STEPS = [
   "skipped_selected_connection_unavailable",
   "selected_connection_reconciled",
   "cloud_to_evolution_fallback",
+  /** Importado pela reconciliação sem acionar o primeiro contato automático. */
+  "backfill_crm_only",
 ] as const;
 
 export type MetaLeadEventStep = (typeof META_LEAD_EVENT_STEPS)[number];

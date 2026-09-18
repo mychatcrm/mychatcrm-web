@@ -4,10 +4,17 @@ import { useState } from "react";
 import type { ClientSession } from "@/lib/client-auth";
 import { LeadDistributionHub } from "./LeadDistributionHub";
 import { MetaLeadEventsPanel } from "./MetaLeadEventsPanel";
+import { CentralDeLeadsPanel } from "./central/CentralDeLeadsPanel";
 import { cn } from "@/lib/utils";
 import { usePanelAppearance } from "@/components/panel/PanelAppearance";
 
-type TabId = "leads" | "rules";
+type TabId = "leads" | "central" | "rules";
+
+const TABS: { id: TabId; label: string; hint: string }[] = [
+  { id: "leads", label: "Leads recebidos", hint: "O que acabou de chegar, em tempo real" },
+  { id: "central", label: "Central de leads", hint: "A base inteira, com filtro, resultado e export" },
+  { id: "rules", label: "Regras de distribuição", hint: "Quem atende cada formulário" },
+];
 
 export function IntegracoesLeadsHub({ session }: { session: ClientSession }) {
   const { isLight } = usePanelAppearance();
@@ -23,17 +30,13 @@ export function IntegracoesLeadsHub({ session }: { session: ClientSession }) {
         role="tablist"
         aria-label="Integrações de leads"
       >
-        {(
-          [
-            { id: "leads" as const, label: "Leads recebidos" },
-            { id: "rules" as const, label: "Regras de distribuição" },
-          ] as const
-        ).map((item) => (
+        {TABS.map((item) => (
           <button
             key={item.id}
             type="button"
             role="tab"
             aria-selected={tab === item.id}
+            title={item.hint}
             className={cn(
               "flex-1 rounded-md px-3 py-2.5 text-center text-sm font-medium transition-colors sm:flex-none sm:px-4",
               tab === item.id
@@ -47,7 +50,9 @@ export function IntegracoesLeadsHub({ session }: { session: ClientSession }) {
         ))}
       </div>
 
-      {tab === "leads" ? <MetaLeadEventsPanel tenantId={session.tenantId} /> : <LeadDistributionHub session={session} />}
+      {tab === "leads" ? <MetaLeadEventsPanel tenantId={session.tenantId} /> : null}
+      {tab === "central" ? <CentralDeLeadsPanel session={session} /> : null}
+      {tab === "rules" ? <LeadDistributionHub session={session} /> : null}
     </div>
   );
 }

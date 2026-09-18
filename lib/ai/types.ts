@@ -12,7 +12,9 @@ export type AiFeature =
   /** Reuniões: análise estruturada, Ask AI e indexação para busca. */
   | "meeting_analysis"
   | "meeting_chat"
-  | "meeting_embedding";
+  | "meeting_embedding"
+  /** Leitura em linguagem natural do desempenho dos leads pagos. */
+  | "lead_insights";
 
 export type AiRole = "user" | "assistant" | "system";
 

@@ -40,6 +40,7 @@ export const META_LEAD_EVENT_OK_STEPS = new Set<string>([
   "skipped_human_attending",
   "manual_assigned_to_agent",
   "manual_assigned_to_human",
+  "backfill_crm_only",
 ]);
 
 export function bucketMetaLeadEventStep(step: string): MetaLeadEventBucket {
