@@ -30,6 +30,8 @@ type ListPayload = {
 
 type DomainWithRecords = LandingDomainRecord & { records: LandingDnsRecord[] };
 
+type LeadRuleSummary = { id: string; name: string; source: string; active?: boolean };
+
 type DetailPayload = {
   page: LandingPageRecord;
   canManage: boolean;
@@ -372,6 +374,7 @@ function PageDetail({
    * idempotência e o servidor respondia "já foi feita" para sempre.
    */
   const [retryNonce, setRetryNonce] = useState(0);
+  const [rules, setRules] = useState<LeadRuleSummary[]>([]);
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/client/landing-pages/${pageId}`, { cache: "no-store" });
@@ -387,6 +390,23 @@ function PageDetail({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/client/lead-rules", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { rules?: LeadRuleSummary[] };
+        if (!cancelled) setRules(payload.rules ?? []);
+      } catch {
+        // Sem regras carregadas o seletor some; a página continua a funcionar.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function act(
     key: string,
@@ -467,6 +487,49 @@ function PageDetail({
 
       {detail.canManage ? (
         <>
+          <div className="flex flex-col gap-3 rounded-mc-base border border-mc-border bg-mc-surface p-4">
+            <div>
+              <h4 className="text-sm font-semibold text-mc-text">Entrega do lead</h4>
+              <p className="text-xs text-mc-muted">
+                A regra escolhida carimba a equipa no lead. <strong>Sem regra, o lead nasce sem
+                equipa e só o titular o vê</strong> — os vendedores não o encontram no CRM.
+              </p>
+            </div>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-mc-muted">Regra de distribuição</span>
+              <select
+                className="min-h-[44px] rounded-mc-base border border-mc-border bg-mc-surface-2 px-3 text-sm text-mc-text"
+                value={page.ruleId ?? ""}
+                disabled={Boolean(busy)}
+                onChange={(event) =>
+                  act(
+                    "rule",
+                    `/api/client/landing-pages/${page.id}`,
+                    {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ ruleId: event.target.value || null }),
+                    },
+                    () => "Regra atualizada.",
+                  )
+                }
+              >
+                <option value="">Sem regra — só o titular vê o lead</option>
+                {rules.map((rule) => (
+                  <option key={rule.id} value={rule.id}>
+                    {rule.name}
+                  </option>
+                ))}
+              </select>
+              {rules.length === 0 ? (
+                <span className="text-xs text-mc-muted">
+                  Nenhuma regra encontrada. Crie uma em Integrações de Leads.
+                </span>
+              ) : null}
+            </label>
+          </div>
+
           <div className="flex flex-col gap-3 rounded-mc-base border border-mc-border bg-mc-surface p-4">
             <h4 className="text-sm font-semibold text-mc-text">Gerar conteúdo com IA</h4>
             <p className="text-xs text-mc-muted">
