@@ -4,6 +4,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { loadLeadInScope, resolveAccessScope, scopeMatchesNothing } from "@/lib/server/access-scope";
 import { listCrmFunnelsFromDb } from "@/lib/server/crm-funnels-db";
 import { appendOperationalAuditEvent } from "@/lib/server/operational-audit";
+import { enqueueCapiForColumnChange } from "@/lib/server/meta-capi";
 
 export const dynamic = "force-dynamic";
 
@@ -116,6 +117,17 @@ export async function POST(request: Request) {
     durationMs: Date.now() - startedAt, resultCode: "card_move_committed",
     relatedIds: { lead_id: leadId, funnel_id: funilId, column_id: status },
     metadata: { previousLeadId, nextLeadId, cardPosition: crmPosition },
+  });
+
+  // Fecha o ciclo com a Meta: o vendedor marcou o desfecho, o algoritmo da
+  // campanha fica a saber. Enfileira e segue — a resposta do CRM não espera
+  // por marketing, e `enqueueCapiForColumnChange` nunca lança.
+  void enqueueCapiForColumnChange({
+    sb,
+    tenantId: session.tenantId,
+    leadId,
+    columnId: status,
+    sourceNote: "crm_card_move",
   });
 
   return NextResponse.json({

@@ -1,0 +1,414 @@
+/**
+ * Certificação em massa das páginas de captura.
+ *
+ * Mesma ideia da certificação do motor do agente: gerar cenários por um gerador
+ * determinístico e provar INVARIANTES, não casos. Um caso prova que um exemplo
+ * funciona; um invariante prova que a classe inteira não pode falhar.
+ *
+ * Por omissão roda 10 mil cenários (CI). Para a certificação completa:
+ *   LANDING_CERTIFICATION_SCENARIOS=1000000 npx vitest run lib/__tests__/landing-pages-certification.test.ts
+ *
+ * Os invariantes de segurança (hosts) vêm primeiro de propósito: um erro ali não
+ * é uma página feia, é o painel exposto no domínio de um cliente.
+ */
+import { describe, expect, it } from "vitest";
+import { setImmediate as yieldToWorker } from "node:timers/promises";
+
+import { parseLandingAttribution, inferAttributionChannel } from "@/lib/landing/attribution";
+import {
+  normalizeLandingBlocks,
+  normalizeLandingTheme,
+  normalizeLandingVersionContent,
+  sanitizeText,
+} from "@/lib/landing/blocks";
+import {
+  apexOf,
+  buildLandingDnsRecords,
+  normalizeLandingHost,
+  txtRecordsMatchToken,
+  validateLandingHost,
+} from "@/lib/landing/domain";
+import {
+  buildSubmissionDedupKey,
+  normalizeLandingFormFields,
+  validateLandingSubmission,
+} from "@/lib/landing/form-schema";
+import {
+  extractPlatformSlug,
+  landingHostAllowsPath,
+  resolveLandingHost,
+} from "@/lib/landing/host-routing";
+import {
+  isReservedLandingSlug,
+  slugifyLandingName,
+  suggestAlternativeSlug,
+  validateLandingSlug,
+} from "@/lib/landing/slug";
+import { buildLandingTemplateContent, LANDING_TEMPLATES } from "@/lib/landing/templates";
+import { buildCreditIdempotencyKey, simulateCreditMove } from "@/lib/credits/ledger";
+import { CREDIT_ACTION_COST, resolveLandingPageAllowance } from "@/lib/credits/pricing";
+
+const DEFAULT_SCENARIOS = 10_000;
+const MAX_SCENARIOS = 1_000_000;
+const SEED = 0x4c414e44;
+
+function scenarioCount(): number {
+  const parsed = Number.parseInt(process.env.LANDING_CERTIFICATION_SCENARIOS ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SCENARIOS;
+  return Math.min(parsed, MAX_SCENARIOS);
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+}
+
+function pick<T>(random: () => number, values: readonly T[]): T {
+  return values[Math.floor(random() * values.length) % values.length];
+}
+
+/** Fragmentos hostis de propósito: é isto que chega num campo público. */
+const TEXT_FRAGMENTS = [
+  "", " ", "Orçamento rápido", "<script>alert(1)</script>", "<img src=x onerror=1>",
+  "Atendimento\u0000oculto", "linha\nquebrada\ttabulada", "acentuação çãõ", "🙂 emoji",
+  "a".repeat(900), "  espaços  ", "</div><h1>injeção", "javascript:void(0)",
+  "'; drop table leads; --", "{{template}}", "${process.env.SECRET}",
+];
+
+const HOST_FRAGMENTS = [
+  "exemplo.com.br", "www.exemplo.com.br", "lp.exemplo.com.br", "exemplo.com",
+  "sub.dominio.exemplo.com.br", "EXEMPLO.COM.BR", "exemplo.com.br.", "exemplo.com.br:443",
+  "https://exemplo.com.br/caminho?x=1", "http://user:pass@exemplo.com.br",
+  "xn--exmplo-dta.com", "192.168.0.1", "meu_site.com", "-inicio.com", "fim-.com",
+  "semponto", "a.b", "exemplo.local", "exemplo.test", "", "   ",
+  "a".repeat(70) + ".com", "exemplo..com", "exemplo.c",
+];
+
+const PATH_FRAGMENTS = [
+  "/", "/privacidade", "/obrigado", "/api/client/landing-pages", "/api/public/landing/submit",
+  "/dashboard", "/dashboard/crm", "/admin", "/admin/login", "/login", "/checkout/solo",
+  "/_next/static/chunk.js", "/favicon.ico", "/sites/outro.com", "/api/webhooks/stripe",
+  "/qualquer/coisa", "/robots.txt",
+];
+
+const PHONE_FRAGMENTS = [
+  "62999887766", "(62) 99988-7766", "5562999887766", "6233334444", "11999887766",
+  "00999887766", "123", "", "abcdefg", "62 98888-8888", "9999999999999999",
+  "(00) 00000-0000", "21988887777", "+55 62 99988-7766",
+];
+
+const APP_HOSTS = [
+  "mychatcrm.com",
+  "www.mychatcrm.com",
+  "mychatcrm.com.br",
+  "www.mychatcrm.com.br",
+];
+const PAGES_DOMAIN = "mcpaginas.com.br";
+
+/** Caminhos que jamais podem ser servidos num host de página. */
+const FORBIDDEN_ON_LANDING = ["/dashboard", "/admin", "/login", "/checkout", "/sites/"];
+
+describe("certificação das páginas de captura", () => {
+  const total = scenarioCount();
+
+  it(`mantém os invariantes em ${total.toLocaleString("pt-BR")} cenários`, async () => {
+    const random = seededRandom(SEED);
+    const config = { appHosts: APP_HOSTS, pagesDomain: PAGES_DOMAIN };
+
+    for (let index = 0; index < total; index += 1) {
+      // ── 1. Roteamento por host: a fronteira de segurança ──────────────────
+      const hostFragment = pick(random, HOST_FRAGMENTS);
+      const path = pick(random, PATH_FRAGMENTS);
+      const decision = resolveLandingHost({ host: hostFragment, pathname: path, config });
+
+      if (decision.kind === "landing") {
+        // Nenhum caminho privado pode ser servido sob um host de página.
+        for (const forbidden of FORBIDDEN_ON_LANDING) {
+          expect(path.startsWith(forbidden)).toBe(false);
+        }
+        // A única API alcançável é a submissão pública.
+        if (path.startsWith("/api/")) {
+          expect(path.startsWith("/api/public/landing")).toBe(true);
+        }
+        expect(decision.rewritePath.startsWith("/sites/")).toBe(true);
+        expect(decision.host).not.toContain("/");
+        expect(decision.host).not.toContain(":");
+      }
+
+      if (decision.kind === "blocked") {
+        expect(landingHostAllowsPath(path)).toBe(false);
+      }
+
+      // Host da aplicação nunca é reescrito, seja qual for o caminho.
+      for (const appHost of APP_HOSTS) {
+        const appDecision = resolveLandingHost({ host: appHost, pathname: path, config });
+        expect(appDecision.kind).toBe("app");
+      }
+      // Previews e desenvolvimento idem.
+      expect(resolveLandingHost({ host: "localhost:3030", pathname: path, config }).kind).toBe("app");
+      expect(
+        resolveLandingHost({ host: "mychatcrm-git-x.vercel.app", pathname: path, config }).kind,
+      ).toBe("app");
+
+      // ── 2. Slug: tem de ser um rótulo DNS legal ───────────────────────────
+      const nameFragment = pick(random, TEXT_FRAGMENTS);
+      const slugCandidate = slugifyLandingName(nameFragment);
+      if (slugCandidate) {
+        expect(slugCandidate).toMatch(/^[a-z0-9-]+$/);
+        expect(slugCandidate.startsWith("-")).toBe(false);
+        expect(slugCandidate.endsWith("-")).toBe(false);
+        expect(slugCandidate.length).toBeLessThanOrEqual(63);
+      }
+
+      const slugCheck = validateLandingSlug(slugCandidate);
+      if (slugCheck.ok) {
+        expect(slugCheck.slug).toMatch(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/);
+        expect(isReservedLandingSlug(slugCheck.slug)).toBe(false);
+        expect(/^[0-9]+$/.test(slugCheck.slug)).toBe(false);
+
+        const alternative = suggestAlternativeSlug(slugCheck.slug, 2 + (index % 40));
+        expect(alternative.length).toBeLessThanOrEqual(63);
+        expect(alternative).toMatch(/^[a-z0-9-]+$/);
+        expect(alternative.endsWith("-")).toBe(false);
+      }
+
+      // ── 3. Domínio: normalização e registos de DNS ────────────────────────
+      const normalizedHost = normalizeLandingHost(hostFragment);
+      expect(normalizedHost).not.toMatch(/^https?:/);
+      expect(normalizedHost).not.toContain("/");
+      expect(normalizedHost).not.toContain(":");
+      expect(normalizedHost).not.toContain("@");
+      expect(normalizedHost).toBe(normalizedHost.toLowerCase());
+      expect(normalizedHost.endsWith(".")).toBe(false);
+
+      const hostCheck = validateLandingHost(hostFragment, [PAGES_DOMAIN, ...APP_HOSTS]);
+      if (hostCheck.ok) {
+        // O apex é sempre sufixo do host, e o rótulo completa a conta.
+        expect(hostCheck.host.endsWith(hostCheck.apex)).toBe(true);
+        expect(apexOf(hostCheck.host)).toBe(hostCheck.apex);
+        if (hostCheck.kind === "apex") {
+          expect(hostCheck.host).toBe(hostCheck.apex);
+          expect(hostCheck.label).toBeNull();
+        } else {
+          expect(hostCheck.label).toBeTruthy();
+          expect(`${hostCheck.label}.${hostCheck.apex}`).toBe(hostCheck.host);
+        }
+        // Domínio da plataforma nunca passa como domínio de cliente.
+        expect(hostCheck.host).not.toBe(PAGES_DOMAIN);
+        expect(hostCheck.host.endsWith(`.${PAGES_DOMAIN}`)).toBe(false);
+
+        const token = `tok${index.toString(16)}`;
+        const records = buildLandingDnsRecords({
+          host: hostCheck.host,
+          kind: hostCheck.kind,
+          apex: hostCheck.apex,
+          label: hostCheck.label,
+          verificationToken: token,
+          cnameTarget: "cname.vercel-dns.com",
+          apexIp: "76.76.21.21",
+        });
+
+        const txt = records.filter((record) => record.type === "TXT");
+        expect(txt).toHaveLength(1);
+        expect(txt[0].value).toBe(`mychatcrm-verification=${token}`);
+        expect(records.some((record) => record.purpose === "routing")).toBe(true);
+        if (hostCheck.kind === "apex") {
+          expect(records.some((record) => record.type === "A")).toBe(true);
+        } else {
+          expect(records.some((record) => record.type === "CNAME")).toBe(true);
+          expect(records.some((record) => record.type === "A")).toBe(false);
+        }
+
+        // A verificação aceita o valor certo, com ou sem aspas, e recusa o errado.
+        expect(txtRecordsMatchToken([txt[0].value], token)).toBe(true);
+        expect(txtRecordsMatchToken([`"${txt[0].value}"`], token)).toBe(true);
+        expect(txtRecordsMatchToken([`mychatcrm-verification=${token}x`], token)).toBe(false);
+        expect(txtRecordsMatchToken([], token)).toBe(false);
+      }
+
+      // ── 4. Subdomínio da plataforma ───────────────────────────────────────
+      const platformSlug = extractPlatformSlug(normalizedHost, PAGES_DOMAIN);
+      if (platformSlug !== null) {
+        expect(platformSlug).not.toContain(".");
+        expect(`${platformSlug}.${PAGES_DOMAIN}`).toBe(normalizedHost);
+      }
+
+      // ── 5. Blocos: nunca lançam, nunca devolvem HTML ──────────────────────
+      const rawBlocks = [
+        { kind: "hero", headline: pick(random, TEXT_FRAGMENTS), subheadline: pick(random, TEXT_FRAGMENTS), ctaLabel: pick(random, TEXT_FRAGMENTS) },
+        { kind: pick(random, ["benefits", "faq", "proof", "lixo", ""]), title: pick(random, TEXT_FRAGMENTS), items: [{ title: pick(random, TEXT_FRAGMENTS), description: pick(random, TEXT_FRAGMENTS), question: pick(random, TEXT_FRAGMENTS), answer: pick(random, TEXT_FRAGMENTS), quote: pick(random, TEXT_FRAGMENTS), author: pick(random, TEXT_FRAGMENTS) }] },
+        null,
+        "texto solto",
+        { kind: "form" },
+        // Duplicado de propósito: a IA já devolveu listas assim.
+        ...(index % 3 === 0 ? [{ kind: "form", title: pick(random, TEXT_FRAGMENTS) }] : []),
+        { kind: "footer", businessName: pick(random, TEXT_FRAGMENTS), legalLine: pick(random, TEXT_FRAGMENTS) },
+      ];
+
+      const content = normalizeLandingVersionContent({
+        blocks: rawBlocks,
+        theme: { accent: pick(random, ["#ff0000", "vermelho", "", "#GGGGGG", "#0a0a0a"]) },
+        seo: { title: pick(random, TEXT_FRAGMENTS), description: pick(random, TEXT_FRAGMENTS) },
+        formFields: [
+          { key: "name", kind: "name", required: true, label: pick(random, TEXT_FRAGMENTS) },
+          { key: "phone", kind: "phone", required: true },
+          { key: "INVÁLIDA!", kind: "text" },
+          { key: "escolha", kind: "select", options: [] },
+          { key: "obs", kind: "textarea", label: "Observação" },
+        ],
+      });
+
+      // Invariante central: toda versão renderizável tem EXATAMENTE um
+      // formulário. Zero não capta; dois quebram a âncora `#formulario` e
+      // duplicam o `id` na página.
+      expect(content.blocks.filter((block) => block.kind === "form")).toHaveLength(1);
+      expect(content.blocks.length).toBeLessThanOrEqual(12);
+      expect(content.theme.accent).toMatch(/^#[0-9a-f]{6}$/);
+      expect(content.seo.title.length).toBeLessThanOrEqual(70);
+      expect(content.seo.description.length).toBeLessThanOrEqual(160);
+      // Rascunho nunca nasce indexável.
+      expect(content.seo.indexable).toBe(false);
+
+      const serialized = JSON.stringify(content.blocks);
+      expect(serialized).not.toContain("<script");
+      expect(serialized).not.toContain("<img");
+      expect(serialized).not.toContain("onerror");
+      expect(serialized).not.toMatch(/<[a-z][^>]*>/i);
+
+      // Campos: chave inválida some, obrigatórios permanecem.
+      const fieldKeys = content.formFields.map((field) => field.key);
+      expect(fieldKeys).toContain("name");
+      expect(fieldKeys).toContain("phone");
+      expect(fieldKeys.every((key) => /^[a-z][a-z0-9_]{0,39}$/.test(key))).toBe(true);
+      expect(new Set(fieldKeys).size).toBe(fieldKeys.length);
+      expect(content.formFields.some((field) => field.key === "escolha")).toBe(false);
+
+      // ── 6. Submissão: telefone e consentimento mandam ─────────────────────
+      const phone = pick(random, PHONE_FRAGMENTS);
+      const consent = random() > 0.3;
+      const submission = validateLandingSubmission({
+        fields: content.formFields,
+        payload: {
+          name: pick(random, TEXT_FRAGMENTS),
+          phone,
+          obs: pick(random, TEXT_FRAGMENTS),
+          /** Chave não declarada: tem de ser ignorada, nunca gravada. */
+          admin: "true",
+          tenant_id: "outro-tenant",
+        },
+        consentGiven: consent,
+      });
+
+      if (submission.ok) {
+        expect(consent).toBe(true);
+        expect(submission.phoneDigits).toMatch(/^\d{10,11}$/);
+        expect(Object.keys(submission.values).every((key) => fieldKeys.includes(key))).toBe(true);
+        expect(submission.values.admin).toBeUndefined();
+        expect(submission.values.tenant_id).toBeUndefined();
+        if (submission.email) expect(submission.email).toContain("@");
+
+        const dedup = buildSubmissionDedupKey({ phoneDigits: submission.phoneDigits, at: new Date(1_700_000_000_000 + index) });
+        expect(dedup).toContain(":");
+        expect(dedup.startsWith(submission.phoneDigits)).toBe(true);
+      } else {
+        expect(Object.keys(submission.errors).length).toBeGreaterThan(0);
+        if (!consent) expect(submission.errors.consent).toBeTruthy();
+      }
+
+      // ── 7. Atribuição: sanitiza e nunca lança ─────────────────────────────
+      const attribution = parseLandingAttribution({
+        query: {
+          gclid: pick(random, [...TEXT_FRAGMENTS, "Cj0KCQ"]),
+          utm_source: pick(random, TEXT_FRAGMENTS),
+          utm_medium: pick(random, ["cpc", "organic", ...TEXT_FRAGMENTS]),
+        },
+        referrer: pick(random, TEXT_FRAGMENTS),
+      });
+      for (const value of Object.values(attribution)) {
+        expect(typeof value).toBe("string");
+        expect(value).not.toMatch(/[\u0000-\u001f]/);
+        expect(value.length).toBeLessThanOrEqual(1024);
+      }
+      expect(typeof inferAttributionChannel(attribution)).toBe("string");
+
+      // ── 8. Créditos: saldo nunca fica negativo ────────────────────────────
+      const balance = Math.floor(random() * 50);
+      const action = pick(random, Object.keys(CREDIT_ACTION_COST) as Array<keyof typeof CREDIT_ACTION_COST>);
+      const move = simulateCreditMove({ balance, delta: -CREDIT_ACTION_COST[action] });
+      expect(move.balance).toBeGreaterThanOrEqual(0);
+      if (move.applied) {
+        expect(move.balance).toBe(balance - CREDIT_ACTION_COST[action]);
+      } else {
+        expect(move.balance).toBe(balance);
+        expect(balance).toBeLessThan(CREDIT_ACTION_COST[action]);
+      }
+
+      // Repetição nunca cobra.
+      const repeat = simulateCreditMove({ balance, delta: -CREDIT_ACTION_COST[action], alreadyApplied: true });
+      expect(repeat.applied).toBe(false);
+      expect(repeat.balance).toBe(balance);
+
+      // Chave de idempotência: estável para a mesma intenção, distinta para outra.
+      const keyA = buildCreditIdempotencyKey({ action, tenantId: `t-${index}`, refId: "p1", attemptToken: "a" });
+      const keyB = buildCreditIdempotencyKey({ action, tenantId: `t-${index}`, refId: "p1", attemptToken: "a" });
+      const keyC = buildCreditIdempotencyKey({ action, tenantId: `t-${index}`, refId: "p2", attemptToken: "a" });
+      expect(keyA).toBe(keyB);
+      expect(keyA).not.toBe(keyC);
+      expect(keyA.length).toBeLessThanOrEqual(200);
+
+      // ── 9. Limite de páginas do plano ─────────────────────────────────────
+      const allowance = resolveLandingPageAllowance({
+        plan: pick(random, ["solo", "equipa", "escala", "enterprise", "desconhecido", ""]),
+        extraEntitlements: Math.floor(random() * 5) - 1,
+        publishedCount: Math.floor(random() * 60) - 5,
+      });
+      expect(allowance.cap).toBeGreaterThanOrEqual(allowance.included);
+      expect(allowance.remaining).toBeGreaterThanOrEqual(0);
+      expect(allowance.published).toBeGreaterThanOrEqual(0);
+      expect(allowance.extra).toBeGreaterThanOrEqual(0);
+
+      // Ceder o processador periodicamente mantém o worker responsivo em 1M.
+      if ((index & 0x3fff) === 0x3fff) await yieldToWorker();
+    }
+  }, 900_000);
+
+  it("gera todos os modelos com conteúdo mínimo válido", () => {
+    for (const template of LANDING_TEMPLATES) {
+      for (const seed of [
+        { businessName: "", proposition: "", desiredAction: "", city: null },
+        { businessName: "<script>x</script>", proposition: "a".repeat(2000), desiredAction: "ação", city: "Goiânia" },
+        { businessName: "Negócio", proposition: "Proposta", desiredAction: "pedir orçamento", city: null },
+      ]) {
+        const content = buildLandingTemplateContent(template.id, seed);
+        const normalized = normalizeLandingVersionContent(content);
+        expect(normalized.blocks.some((block) => block.kind === "hero")).toBe(true);
+        expect(normalized.blocks.some((block) => block.kind === "form")).toBe(true);
+        expect(JSON.stringify(normalized.blocks)).not.toMatch(/<[a-z][^>]*>/i);
+        expect(normalized.seo.title.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("sanitiza texto sem deixar marcação escapar", () => {
+    expect(sanitizeText("<b>oi</b>")).toBe("oi");
+    expect(sanitizeText("<script>alert(1)</script>")).toBe("alert(1)");
+    expect(sanitizeText("linha\nquebra")).toBe("linha quebra");
+    expect(sanitizeText(123 as unknown)).toBe("");
+    expect(sanitizeText("a".repeat(1000), 10)).toHaveLength(10);
+  });
+
+  it("mantém o tema dentro do contrato", () => {
+    const theme = normalizeLandingTheme({ accent: "não-é-cor", radius: "esquisito" });
+    expect(theme.accent).toMatch(/^#[0-9a-f]{6}$/);
+    expect(["sharp", "soft", "round"]).toContain(theme.radius);
+  });
+
+  it("nunca perde nome e telefone do formulário", () => {
+    expect(normalizeLandingFormFields([]).map((f) => f.key)).toEqual(["phone", "name"]);
+    expect(normalizeLandingFormFields(null).length).toBeGreaterThanOrEqual(2);
+    expect(normalizeLandingBlocks("não é array")).toEqual([]);
+  });
+});

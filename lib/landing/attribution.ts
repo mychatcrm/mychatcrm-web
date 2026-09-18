@@ -1,0 +1,106 @@
+/**
+ * Atribuição do clique pago.
+ *
+ * Guardar isto agora, mesmo sem a importação de conversões ligada, não é
+ * adiantamento: o clique passa uma vez. Um lead que chegou hoje sem `gclid`
+ * guardado nunca mais pode ser ligado à campanha que o trouxe — a informação
+ * não existe em lugar nenhum depois que o visitante fecha a aba.
+ *
+ * `gclid` é o clique do Google. `wbraid`/`gbraid` são os substitutos em iOS,
+ * quando o `gclid` não sobrevive à privacidade do aparelho: quem ignora os dois
+ * perde a maior fatia do tráfego móvel.
+ */
+
+import type { LandingAttribution } from "@/lib/landing/types";
+
+const MAX_VALUE_LENGTH = 512;
+const MAX_REFERRER_LENGTH = 1024;
+
+/** Um parâmetro de campanha nunca tem quebra de linha nem caractere de controlo. */
+function sanitizeValue(raw: unknown, maxLength = MAX_VALUE_LENGTH): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!cleaned) return undefined;
+  return cleaned.slice(0, maxLength);
+}
+
+const CLICK_ID_KEYS = ["gclid", "wbraid", "gbraid", "fbclid", "msclkid"] as const;
+
+const UTM_KEYS: Array<[string, keyof LandingAttribution]> = [
+  ["utm_source", "utmSource"],
+  ["utm_medium", "utmMedium"],
+  ["utm_campaign", "utmCampaign"],
+  ["utm_term", "utmTerm"],
+  ["utm_content", "utmContent"],
+];
+
+export function parseLandingAttribution(params: {
+  query: Record<string, string | string[] | undefined> | URLSearchParams | null | undefined;
+  referrer?: string | null;
+  landedAt?: Date;
+}): LandingAttribution {
+  const read = (key: string): string | undefined => {
+    const query = params.query;
+    if (!query) return undefined;
+    if (query instanceof URLSearchParams) return sanitizeValue(query.get(key));
+    const value = query[key];
+    if (Array.isArray(value)) return sanitizeValue(value[0]);
+    return sanitizeValue(value);
+  };
+
+  const out: LandingAttribution = {};
+
+  for (const key of CLICK_ID_KEYS) {
+    const value = read(key);
+    if (value) out[key] = value;
+  }
+  for (const [queryKey, field] of UTM_KEYS) {
+    const value = read(queryKey);
+    if (value) (out as Record<string, string>)[field] = value;
+  }
+
+  const referrer = sanitizeValue(params.referrer ?? undefined, MAX_REFERRER_LENGTH);
+  if (referrer) out.referrer = referrer;
+
+  out.landedAt = (params.landedAt ?? new Date()).toISOString();
+  return out;
+}
+
+/** Alguma coisa de tráfego pago veio junto? Decide se vale enfileirar conversão. */
+export function hasPaidClickId(attribution: LandingAttribution | null | undefined): boolean {
+  if (!attribution) return false;
+  return CLICK_ID_KEYS.some((key) => Boolean(attribution[key]));
+}
+
+/** Canal provável, para a interface e para agrupar relatório sem depender de UTM bem preenchido. */
+export function inferAttributionChannel(
+  attribution: LandingAttribution | null | undefined,
+): "google_ads" | "meta_ads" | "microsoft_ads" | "organic" | "referral" | "direct" {
+  if (!attribution) return "direct";
+  if (attribution.gclid || attribution.wbraid || attribution.gbraid) return "google_ads";
+  if (attribution.fbclid) return "meta_ads";
+  if (attribution.msclkid) return "microsoft_ads";
+
+  const medium = attribution.utmMedium?.toLowerCase() ?? "";
+  if (medium === "cpc" || medium === "ppc" || medium === "paid") {
+    const source = attribution.utmSource?.toLowerCase() ?? "";
+    if (source.includes("google")) return "google_ads";
+    if (source.includes("facebook") || source.includes("meta") || source.includes("instagram")) {
+      return "meta_ads";
+    }
+    if (source.includes("bing") || source.includes("microsoft")) return "microsoft_ads";
+  }
+  if (attribution.utmSource) return "organic";
+  if (attribution.referrer) return "referral";
+  return "direct";
+}
+
+/** Serializa para `leads.attribution` mantendo só o que tem valor. */
+export function attributionToJson(attribution: LandingAttribution): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(attribution)) {
+    if (typeof value === "string" && value) out[key] = value;
+  }
+  return out;
+}

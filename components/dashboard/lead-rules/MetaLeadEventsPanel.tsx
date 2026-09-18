@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
+  Archive,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -11,7 +12,6 @@ import {
   Filter,
   Loader2,
   RefreshCw,
-  Trash2,
   UserCog,
   X,
 } from "lucide-react";
@@ -520,21 +520,30 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
     }
   }, [assignEventId, assignTarget, closeAssignModal]);
 
+  /**
+   * Arquiva em vez de apagar. Antes este botão fazia um DELETE definitivo atrás
+   * de um `window.confirm`: a linha sumia do banco, sem histórico e sem volta.
+   * Arquivado sai desta lista mas continua na Central, no export e no filtro
+   * "Arquivados".
+   */
   const removeFromInbox = useCallback(
     async (eventId: string, leadName: string) => {
       const ok = window.confirm(
-        `Remover "${leadName}" da lista de leads recebidos?\n\nO lead no CRM não será excluído.`,
+        `Arquivar "${leadName}"?\n\nEle sai desta lista mas continua na Central de leads e no CRM.`,
       );
       if (!ok) return;
       setDeletingId(eventId);
       setRemoveError(null);
       try {
-        const res = await fetch(`/api/client/meta/lead-events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
-        const json = (await res.json()) as { error?: string };
-        if (!res.ok) throw new Error(json.error ?? "Falha ao remover");
+        const res = await fetch(
+          `/api/client/meta/lead-events/${encodeURIComponent(eventId)}/archive`,
+          { method: "POST", credentials: "same-origin" },
+        );
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) throw new Error(json.error ?? "Falha ao arquivar");
         setEvents((prev) => prev.filter((e) => e.id !== eventId));
       } catch (e) {
-        setRemoveError(e instanceof Error ? e.message : "Erro ao remover");
+        setRemoveError(e instanceof Error ? e.message : "Erro ao arquivar");
       } finally {
         setDeletingId(null);
       }
@@ -546,7 +555,7 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/client/meta/lead-events?limit=1000", { cache: "no-store" });
+      const res = await fetch("/api/client/meta/lead-events?limit=200", { cache: "no-store" });
       const json = (await res.json()) as { events?: MetaLeadEventRow[]; error?: string; tableReady?: boolean };
       if (!res.ok) throw new Error(json.error ?? "Falha ao carregar leads");
       setEvents(json.events ?? []);
@@ -577,9 +586,17 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
       )
       .subscribe();
 
-    const poll = window.setInterval(() => void refresh(), 15_000);
+    // Sem polling: o realtime acima já avisa de cada linha nova. O intervalo de
+    // 15s que existia aqui disparava um GET da inbox inteira a cada 15 segundos,
+    // para cada aba aberta, mesmo sem nenhum lead novo — dava para ver a
+    // sequência ininterrupta nos logs de produção. A rede de segurança agora é
+    // um refresh só quando o separador volta a ficar visível.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
       void sb.removeChannel(channel);
     };
   }, [tenantId, refresh]);
@@ -859,14 +876,14 @@ export function MetaLeadEventsPanel({ tenantId }: { tenantId: string }) {
                     className="h-7 w-full px-2 text-[11px] sm:w-auto"
                     disabled={deletingId === ev.id}
                     onClick={() => void removeFromInbox(ev.id, ev.name || ev.phone || "lead")}
-                    title="Remover só desta lista (mantém no CRM)"
+                    title="Arquivar: sai desta lista, continua na Central e no CRM"
                   >
                     {deletingId === ev.id ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                     ) : (
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      <Archive className="h-3.5 w-3.5" aria-hidden />
                     )}
-                    Remover
+                    Arquivar
                   </Button>
                 </div>
               </div>

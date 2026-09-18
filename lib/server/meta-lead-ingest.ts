@@ -356,7 +356,24 @@ function buildMappingMetadata(params: {
   };
 }
 
-export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void> {
+export type ProcessMetaLeadgenOptions = {
+  /**
+   * Importa o lead para o CRM e para a Central, mas não aciona o primeiro
+   * contato automático.
+   *
+   * É o modo padrão da reconciliação: recuperar um lead de três dias atrás é
+   * útil, mandar-lhe "vi que te interessaste" três dias depois não é — e um
+   * backfill de 200 leads dispararia 200 conversas de uma vez.
+   */
+  suppressOutreach?: boolean;
+  /** Rótulo da origem do reprocessamento, para a auditoria e a linha do tempo. */
+  reprocessSource?: string;
+};
+
+export async function processMetaLeadgenEvent(
+  value: LeadgenValue,
+  options: ProcessMetaLeadgenOptions = {},
+): Promise<void> {
   const { leadgen_id, page_id, form_id, ad_id, ad_group_id } = value;
   if (!leadgen_id || !page_id) {
     console.warn("[meta-webhook] Missing leadgen_id or page_id — skipping");
@@ -928,6 +945,27 @@ export async function processMetaLeadgenEvent(value: LeadgenValue): Promise<void
       lead_id: leadId,
       error: quotaCommitError instanceof Error ? quotaCommitError.message : String(quotaCommitError),
     });
+  }
+
+  // Corte do backfill: o lead já está no CRM com equipe, dono e atribuição de
+  // campanha. Daqui para a frente é automação de conversa, que a importação
+  // deliberadamente não executa.
+  if (options.suppressOutreach) {
+    await eventRecorder.step("backfill_crm_only", {
+      source: options.reprocessSource ?? "reconciliation",
+      agent_id: agentId ?? null,
+    });
+    await eventRecorder.patch({
+      whatsapp_status: "skipped",
+      error_message: "backfill_crm_only",
+      current_step: "backfill_crm_only",
+    });
+    console.info("[meta-backfill] Lead imported without outreach", {
+      tenant_id,
+      lead_id: leadId,
+      leadgen_id,
+    });
+    return;
   }
 
   if (!agentId || !agentResolution.authorized) {

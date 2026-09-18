@@ -5,7 +5,7 @@ import { SITE_URL } from "@/lib/constants";
 import { getStripe } from "@/lib/stripe";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 
-export type BillingAddonKind = "lead_capacity" | "whatsapp_line" | "api_connector";
+export type BillingAddonKind = "lead_capacity" | "whatsapp_line" | "api_connector" | "landing_page";
 export type BillingAddonMode = "recurring" | "one_time";
 
 export type BillingAddonCatalogItem = {

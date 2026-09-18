@@ -12,6 +12,7 @@
  */
 import { normalizeWhatsAppPhone } from "@/lib/server/auto-lead-upsert";
 import type { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { enqueueMetaCapiEvent } from "@/lib/server/meta-capi";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -351,6 +352,21 @@ export async function applyAgentCrmMove(params: {
       funnel_id: target.funnelId,
       column_id: target.columnId,
     });
+
+    // Agendamento é o sinal mais valioso que se pode devolver à Meta num funil
+    // de lead: é o primeiro compromisso real da pessoa. Vai para a fila, nunca
+    // pela linha do agente — este módulo não pode ganhar uma chamada de rede
+    // que falhe e derrube o efeito colateral do turno.
+    if (params.action === "scheduled" || params.action === "rescheduled") {
+      void enqueueMetaCapiEvent({
+        sb: params.sb,
+        tenantId: params.tenantId,
+        leadId,
+        eventName: "Schedule",
+        sourceNote: `agent_crm_move:${params.action}`,
+      });
+    }
+
     return "moved";
   } catch (err) {
     console.warn("[agent-crm-move] unexpected_error", {

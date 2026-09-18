@@ -24,6 +24,7 @@ const MANAGER_OR_DIRECTOR_ROUTE_KEYS = new Set([
   "agentes",
   "conversas",
   "integracoes-leads",
+  "paginas",
   "disparos",
   "reunioes",
   "agenda",

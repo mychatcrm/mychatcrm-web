@@ -137,6 +137,25 @@ export const dashboardNavPinnedItems: DashboardNavItem[] = [
     },
   },
   {
+    href: "/dashboard/paginas",
+    label: "Páginas de Captura",
+    headerTitle: "Páginas de captura e domínios",
+    short: "PC",
+    routeKey: "paginas",
+    help: {
+      title: "Páginas de Captura",
+      summary:
+        "Cria a página que recebe o clique do anúncio e entrega o contacto direto no CRM, com o domínio que você quiser.",
+      items: [
+        "Gere a página a partir do que já configurou no agente — sem briefing e sem editor.",
+        "Publique no endereço grátis da plataforma ou num domínio seu, trazido ou comprado aqui.",
+        "A origem do clique (Google, Meta, orgânico) fica gravada no lead.",
+      ],
+      example:
+        "Um anúncio no Google leva à página; quem preenche vira lead no funil escolhido, já com a equipa certa.",
+    },
+  },
+  {
     href: "/dashboard/colaboradores",
     label: "Colaboradores",
     headerTitle: "Colaboradores que recebem leads",

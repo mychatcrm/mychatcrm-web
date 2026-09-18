@@ -1,0 +1,259 @@
+/**
+ * Normalização do conteúdo de uma versão.
+ *
+ * Duas fontes escrevem aqui e nenhuma é confiável: a IA (que às vezes devolve
+ * campo a mais, a menos ou com o tipo errado) e o banco (que guarda versões
+ * antigas, gravadas por um formato que já mudou). Por isso nada aqui lança
+ * exceção — a página está publicada e comprando tráfego; uma versão malformada
+ * tem de degradar para algo que renderiza, nunca para erro 500.
+ *
+ * Texto entra como texto. Nada de HTML vindo do banco: o renderizador decide a
+ * marcação, e é isso que impede uma página de cliente virar vetor de script.
+ */
+
+import {
+  defaultLandingFormFields,
+  normalizeLandingFormFields,
+} from "@/lib/landing/form-schema";
+import type {
+  LandingBlock,
+  LandingSeo,
+  LandingTheme,
+  LandingVersionContent,
+} from "@/lib/landing/types";
+
+export const LANDING_MAX_BLOCKS = 12;
+const MAX_HEADLINE = 160;
+const MAX_TEXT = 600;
+const MAX_ITEMS = 8;
+
+/** Remove controlo e tags. Não escapa — o React escapa; isto é limpeza de dado. */
+export function sanitizeText(raw: unknown, maxLength = MAX_TEXT): string {
+  if (typeof raw !== "string") return "";
+  return raw
+    .replace(/<[^>]*>/g, " ")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+export const DEFAULT_LANDING_THEME: LandingTheme = {
+  accent: "#F24400",
+  background: "#05080B",
+  surface: "#0B1118",
+  text: "#F5F7FA",
+  muted: "#93A1B0",
+  radius: "soft",
+};
+
+export function normalizeLandingTheme(raw: unknown): LandingTheme {
+  const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  // O padrão também desce para minúsculas: cor do cliente e cor de omissão têm
+  // de sair na mesma forma, senão comparar duas versões acusa diferença que não
+  // existe.
+  const color = (key: keyof LandingTheme, fallback: string): string => {
+    const value = row[key];
+    return typeof value === "string" && HEX_COLOR.test(value.trim())
+      ? value.trim().toLowerCase()
+      : fallback.toLowerCase();
+  };
+  const radiusRaw = typeof row.radius === "string" ? row.radius.trim().toLowerCase() : "";
+  const radius: LandingTheme["radius"] =
+    radiusRaw === "sharp" || radiusRaw === "round" ? radiusRaw : "soft";
+
+  return {
+    accent: color("accent", DEFAULT_LANDING_THEME.accent),
+    background: color("background", DEFAULT_LANDING_THEME.background),
+    surface: color("surface", DEFAULT_LANDING_THEME.surface),
+    text: color("text", DEFAULT_LANDING_THEME.text),
+    muted: color("muted", DEFAULT_LANDING_THEME.muted),
+    radius,
+  };
+}
+
+export function normalizeLandingSeo(raw: unknown, fallbackTitle = "Fale connosco"): LandingSeo {
+  const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const title = sanitizeText(row.title, 70) || fallbackTitle;
+  const description = sanitizeText(row.description, 160)
+    || "Preencha o formulário e fale com a nossa equipa pelo WhatsApp.";
+  return { title, description, indexable: row.indexable === true };
+}
+
+function textItems(
+  raw: unknown,
+  map: (row: Record<string, unknown>) => Record<string, string> | null,
+): Array<Record<string, string>> {
+  const input = Array.isArray(raw) ? raw : [];
+  const out: Array<Record<string, string>> = [];
+  for (const entry of input) {
+    if (!entry || typeof entry !== "object") continue;
+    const mapped = map(entry as Record<string, unknown>);
+    if (mapped) out.push(mapped);
+    if (out.length >= MAX_ITEMS) break;
+  }
+  return out;
+}
+
+/** Bloco inválido devolve `null` e some da página — melhor faltar do que quebrar. */
+export function normalizeLandingBlock(raw: unknown): LandingBlock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const kind = typeof row.kind === "string" ? row.kind.trim().toLowerCase() : "";
+
+  switch (kind) {
+    case "hero": {
+      const headline = sanitizeText(row.headline, MAX_HEADLINE);
+      if (!headline) return null;
+      return {
+        kind: "hero",
+        headline,
+        subheadline: sanitizeText(row.subheadline, MAX_TEXT),
+        ctaLabel: sanitizeText(row.ctaLabel, 40) || "Quero falar agora",
+        ...(sanitizeText(row.eyebrow, 60) ? { eyebrow: sanitizeText(row.eyebrow, 60) } : {}),
+      };
+    }
+    case "benefits": {
+      const items = textItems(row.items, (item) => {
+        const title = sanitizeText(item.title, 80);
+        if (!title) return null;
+        return { title, description: sanitizeText(item.description, MAX_TEXT) };
+      }) as Array<{ title: string; description: string }>;
+      if (items.length === 0) return null;
+      return { kind: "benefits", title: sanitizeText(row.title, MAX_HEADLINE) || "Por que falar connosco", items };
+    }
+    case "proof": {
+      const items = textItems(row.items, (item) => {
+        const quote = sanitizeText(item.quote, MAX_TEXT);
+        if (!quote) return null;
+        return { quote, author: sanitizeText(item.author, 80) || "Cliente" };
+      }) as Array<{ quote: string; author: string }>;
+      if (items.length === 0) return null;
+      return { kind: "proof", title: sanitizeText(row.title, MAX_HEADLINE) || "Quem já veio", items };
+    }
+    case "faq": {
+      const items = textItems(row.items, (item) => {
+        const question = sanitizeText(item.question, 160);
+        const answer = sanitizeText(item.answer, MAX_TEXT);
+        if (!question || !answer) return null;
+        return { question, answer };
+      }) as Array<{ question: string; answer: string }>;
+      if (items.length === 0) return null;
+      return { kind: "faq", title: sanitizeText(row.title, MAX_HEADLINE) || "Perguntas frequentes", items };
+    }
+    case "form": {
+      return {
+        kind: "form",
+        title: sanitizeText(row.title, MAX_HEADLINE) || "Fale connosco",
+        description: sanitizeText(row.description, MAX_TEXT),
+        submitLabel: sanitizeText(row.submitLabel, 40) || "Enviar",
+        successMessage: sanitizeText(row.successMessage, MAX_TEXT)
+          || "Recebemos o seu contacto. Já vamos falar consigo no WhatsApp.",
+        consentText: sanitizeText(row.consentText, MAX_TEXT)
+          || "Autorizo o contacto por WhatsApp, telefone e e-mail sobre esta solicitação.",
+      };
+    }
+    case "cta": {
+      const headline = sanitizeText(row.headline, MAX_HEADLINE);
+      if (!headline) return null;
+      return {
+        kind: "cta",
+        headline,
+        description: sanitizeText(row.description, MAX_TEXT),
+        ctaLabel: sanitizeText(row.ctaLabel, 40) || "Quero falar agora",
+      };
+    }
+    case "footer": {
+      return {
+        kind: "footer",
+        businessName: sanitizeText(row.businessName, 120) || "",
+        legalLine: sanitizeText(row.legalLine, MAX_TEXT) || "",
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+export function normalizeLandingBlocks(raw: unknown): LandingBlock[] {
+  const input = Array.isArray(raw) ? raw : [];
+  const blocks: LandingBlock[] = [];
+  for (const entry of input) {
+    const block = normalizeLandingBlock(entry);
+    if (block) blocks.push(block);
+    if (blocks.length >= LANDING_MAX_BLOCKS) break;
+  }
+  return blocks;
+}
+
+/**
+ * Exatamente UM bloco de formulário. Nem zero, nem dois.
+ *
+ * Zero é página que não capta nada — é o único bloco insubstituível, então
+ * entra o padrão em vez de publicar página morta.
+ *
+ * Dois é pior do que parece: o renderizador ancora o botão do herói em
+ * `#formulario`, e dois elementos com o mesmo `id` quebram a âncora e a
+ * navegação por leitor de ecrã. A IA já devolveu listas com o bloco repetido,
+ * então a garantia vive aqui, no dado, e não na confiança no gerador.
+ */
+function ensureFormBlock(blocks: LandingBlock[]): LandingBlock[] {
+  const firstFormIndex = blocks.findIndex((block) => block.kind === "form");
+
+  if (firstFormIndex >= 0) {
+    return blocks.filter((block, index) => block.kind !== "form" || index === firstFormIndex);
+  }
+
+  const fallback = normalizeLandingBlock({ kind: "form" });
+  if (!fallback) return blocks;
+  const footerIndex = blocks.findIndex((block) => block.kind === "footer");
+  if (footerIndex < 0) return [...blocks, fallback];
+  return [...blocks.slice(0, footerIndex), fallback, ...blocks.slice(footerIndex)];
+}
+
+export function normalizeLandingVersionContent(raw: unknown): LandingVersionContent {
+  const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const blocks = ensureFormBlock(normalizeLandingBlocks(row.blocks));
+  const formFields = normalizeLandingFormFields(row.formFields);
+
+  return {
+    blocks,
+    theme: normalizeLandingTheme(row.theme),
+    seo: normalizeLandingSeo(row.seo),
+    formFields: formFields.length > 0 ? formFields : defaultLandingFormFields(),
+  };
+}
+
+/** Texto visível da versão — usado para prévia e para gerar anúncios a partir da página. */
+export function landingVersionPlainText(content: LandingVersionContent): string {
+  const parts: string[] = [];
+  for (const block of content.blocks) {
+    switch (block.kind) {
+      case "hero":
+        parts.push(block.eyebrow ?? "", block.headline, block.subheadline, block.ctaLabel);
+        break;
+      case "benefits":
+        parts.push(block.title, ...block.items.flatMap((i) => [i.title, i.description]));
+        break;
+      case "proof":
+        parts.push(block.title, ...block.items.flatMap((i) => [i.quote, i.author]));
+        break;
+      case "faq":
+        parts.push(block.title, ...block.items.flatMap((i) => [i.question, i.answer]));
+        break;
+      case "form":
+        parts.push(block.title, block.description, block.submitLabel);
+        break;
+      case "cta":
+        parts.push(block.headline, block.description, block.ctaLabel);
+        break;
+      case "footer":
+        parts.push(block.businessName, block.legalLine);
+        break;
+    }
+  }
+  return parts.filter(Boolean).join("\n").trim();
+}

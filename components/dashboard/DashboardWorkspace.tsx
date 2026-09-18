@@ -154,6 +154,7 @@ import { LembretesHub } from "./lembretes/LembretesHub";
 import { SuporteHub } from "./suporte/SuporteHub";
 import { BillingOffersPopover } from "./BillingOffersPopover";
 import { IntegracoesLeadsHub } from "./lead-rules/IntegracoesLeadsHub";
+import { PaginasHub } from "@/components/dashboard/paginas/PaginasHub";
 import { TeamEmployeesHub } from "./equipe/TeamEmployeesHub";
 import { TeamsHub } from "./equipes/TeamsHub";
 import { BotStatusToggle } from "./BotStatusToggle";
@@ -5174,6 +5175,15 @@ export function DashboardWorkspace({
         return <AtendimentoV2 session={session} />;
       case "integracoes-leads":
         return <IntegracoesLeadsHub session={session} />;
+      case "paginas":
+        return (
+          <Panel
+            title="Páginas de captura"
+            description="A página que recebe o clique do anúncio, com domínio próprio e o contacto a cair direto no CRM."
+          >
+            <PaginasHub session={session} />
+          </Panel>
+        );
       case "colaboradores":
         return <TeamEmployeesHub session={session} />;
       case "equipes":

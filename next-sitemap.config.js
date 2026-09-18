@@ -82,6 +82,10 @@ module.exports = {
   autoLastmod: true,
 
   exclude: [
+    // Renderizador das páginas de cliente: caminho interno, alcançado só por
+    // reescrita de host. Nunca pode entrar no mapa do site da MyChatCRM.
+    "/sites",
+    "/sites/*",
     "/dashboard",
     "/dashboard/*",
     "/admin",

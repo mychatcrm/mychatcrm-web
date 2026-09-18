@@ -43,6 +43,9 @@ describe("bucketMetaLeadEventStep", () => {
       skipped_selected_connection_unavailable: "erro",
       selected_connection_reconciled: "novo",
       cloud_to_evolution_fallback: "novo",
+      // Importado pela reconciliação: o lead entrou no CRM com sucesso, só não
+      // recebeu o primeiro contato. É desfecho bom, não erro.
+      backfill_crm_only: "ok",
     };
 
     for (const step of META_LEAD_EVENT_STEPS) {
