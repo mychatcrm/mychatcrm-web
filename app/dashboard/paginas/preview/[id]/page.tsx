@@ -12,7 +12,7 @@
 import { notFound } from "next/navigation";
 import { getClientSessionFromCookies } from "@/lib/client-auth-server";
 import { LandingRenderer } from "@/components/landing/public/LandingRenderer";
-import { resolveOrganizationRole } from "@/lib/organization-role";
+import { sessionCanAccessDashboardRoute } from "@/lib/organization-role";
 import { getLandingPage, getLandingVersion } from "@/lib/server/landing-pages-db";
 
 export const dynamic = "force-dynamic";
@@ -32,8 +32,8 @@ export default async function LandingPreviewPage({
   const session = await getClientSessionFromCookies();
   if (!session) notFound();
 
-  const role = resolveOrganizationRole(session);
-  if (role !== "owner" && role !== "director") notFound();
+  // Mesma régua do resto do módulo: quem vê o item no menu abre a prévia.
+  if (!sessionCanAccessDashboardRoute(session, "paginas")) notFound();
 
   const page = await getLandingPage({ tenantId: session.tenantId, pageId: params.id }).catch(
     () => null,

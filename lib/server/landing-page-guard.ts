@@ -4,7 +4,10 @@ import { NextResponse } from "next/server";
 import type { ClientSession } from "@/lib/client-auth";
 import { requireActiveClientSession } from "@/lib/server/client-session-guard";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { resolveOrganizationRole } from "@/lib/organization-role";
+import {
+  resolveOrganizationRole,
+  sessionCanAccessDashboardRoute,
+} from "@/lib/organization-role";
 
 type SupabaseServiceClient = ReturnType<typeof createSupabaseServiceClient>;
 
@@ -37,7 +40,13 @@ export async function requireLandingAccess(options: { manageOnly?: boolean } = {
   const role = resolveOrganizationRole(session);
   const canManage = role === "owner";
 
-  if (!canManage && role !== "director") {
+  /**
+   * Leitura acompanha o menu: quem vê o item na barra lateral tem de conseguir
+   * abrir a página, senão o painel mostra um erro em vez de uma tela. Escrita é
+   * outra coisa — publicar, arquivar, comprar domínio e gastar crédito são do
+   * titular, e isso é `manageOnly`.
+   */
+  if (!sessionCanAccessDashboardRoute(session, "paginas")) {
     return {
       ok: false,
       response: NextResponse.json(

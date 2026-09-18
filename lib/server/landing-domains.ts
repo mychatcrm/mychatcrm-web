@@ -12,6 +12,7 @@ import {
 } from "@/lib/landing/config";
 import {
   LANDING_DNS_VERIFICATION_PREFIX,
+  apexOf,
   buildLandingDnsRecords,
   txtRecordsMatchToken,
   validateLandingHost,
@@ -365,9 +366,92 @@ export async function removeLandingDomain(params: {
 export type DomainSuggestion = {
   domain: string;
   available: boolean;
-  priceBRL: number | null;
-  currency: string;
+  /** Ex.: `requires_cpf_or_cnpj` no `.com.br`. O cliente precisa de saber antes. */
+  restriction: string | null;
+  isAlternative: boolean;
+  /** Primeiro ano, em reais. `null` quando o catálogo não tem preço para o TLD. */
+  firstYearBRL: number | null;
+  /** Renovação anual — o valor que dói no ano seguinte, e que ninguém mostra. */
+  renewalBRL: number | null;
 };
+
+type DomainCatalogPrice = {
+  /** `item_id` do registador. A compra é recusada sem ele. */
+  itemId: string;
+  firstYearBRL: number;
+  renewalBRL: number;
+};
+
+/**
+ * TLD de um domínio: `exemplo.com.br` → `com.br`, `sub.exemplo.com` → `com`.
+ *
+ * Passa por `apexOf` primeiro, que conhece os sufixos públicos de dois rótulos.
+ * Cortar os dois últimos rótulos direto erraria em `sub.exemplo.com`, devolvendo
+ * `exemplo.com` e não achando preço nenhum no catálogo.
+ */
+function tldOf(host: string): string {
+  const apex = apexOf(host);
+  return apex.split(".").slice(1).join(".");
+}
+
+const catalogCache = new Map<string, { value: DomainCatalogPrice | null; at: number }>();
+const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Preço e `item_id` do TLD.
+ *
+ * O endpoint de disponibilidade **não** devolve preço, e a compra exige o
+ * `item_id` do catálogo — não o nome do domínio. Sem esta consulta, a compra
+ * falha na validação do registador e o cliente vê um erro genérico depois de
+ * confirmar.
+ *
+ * Valores vêm em cêntimos. Guardamos o preço do primeiro ano e o da renovação
+ * porque são diferentes, e mostrar só o primeiro é o truque de venda que não
+ * vamos repetir.
+ */
+async function resolveDomainCatalogPrice(tld: string): Promise<DomainCatalogPrice | null> {
+  const key = tld.toLowerCase();
+  const cached = catalogCache.get(key);
+  if (cached && Date.now() - cached.at < CATALOG_TTL_MS) return cached.value;
+
+  const payload = await hostingerRequest<unknown>(
+    `/api/billing/v1/catalog?category=DOMAIN&name=${encodeURIComponent(`.${key.toUpperCase()}*`)}`,
+    { method: "GET" },
+  );
+
+  const items: Array<Record<string, unknown>> = Array.isArray(payload)
+    ? (payload as Array<Record<string, unknown>>)
+    : Array.isArray((payload as { data?: unknown } | null)?.data)
+      ? ((payload as { data: Array<Record<string, unknown>> }).data)
+      : [];
+
+  let resolved: DomainCatalogPrice | null = null;
+
+  for (const item of items) {
+    const prices = Array.isArray(item.prices) ? (item.prices as Array<Record<string, unknown>>) : [];
+    const yearly = prices.find(
+      (price) =>
+        price.period === 1 &&
+        price.period_unit === "year" &&
+        String(price.currency ?? "").toUpperCase() === "BRL",
+    );
+    if (!yearly || typeof yearly.id !== "string") continue;
+
+    const renewalCents = Number(yearly.price ?? 0);
+    const firstCents = Number(yearly.first_period_price ?? renewalCents);
+    if (!Number.isFinite(renewalCents) || renewalCents <= 0) continue;
+
+    resolved = {
+      itemId: yearly.id,
+      firstYearBRL: Math.round(firstCents) / 100,
+      renewalBRL: Math.round(renewalCents) / 100,
+    };
+    break;
+  }
+
+  catalogCache.set(key, { value: resolved, at: Date.now() });
+  return resolved;
+}
 
 async function hostingerRequest<T>(path: string, init?: RequestInit): Promise<T | null> {
   const token = hostingerApiToken();
@@ -416,24 +500,58 @@ export async function checkDomainAvailability(params: {
     .replace(/[^a-z0-9-]/g, "");
   if (!base) return { suggestions: [], enabled: true };
 
+  // `with_alternatives` só é aceite com UM tld; com vários, o registador recusa.
   const tlds = params.tlds?.length ? params.tlds : ["com.br", "com", "app", "net"];
-  const payload = await hostingerRequest<{ data?: Array<Record<string, unknown>> }>(
-    "/api/domains/v1/availability",
-    {
-      method: "POST",
-      body: JSON.stringify({ domain: base, tlds, with_alternatives: true }),
-    },
+  const payload = await hostingerRequest<unknown>("/api/domains/v1/availability", {
+    method: "POST",
+    body: JSON.stringify({
+      domain: base,
+      tlds,
+      ...(tlds.length === 1 ? { with_alternatives: true } : {}),
+    }),
+  });
+
+  /**
+   * O endpoint devolve um ARRAY no topo, não `{ data: [...] }` — confirmado
+   * contra a API real. Aceitar as duas formas evita que uma mudança de
+   * empacotamento volte a deixar a busca silenciosamente vazia.
+   */
+  const rows: Array<Record<string, unknown>> = Array.isArray(payload)
+    ? (payload as Array<Record<string, unknown>>)
+    : Array.isArray((payload as { data?: unknown } | null)?.data)
+      ? ((payload as { data: Array<Record<string, unknown>> }).data)
+      : [];
+
+  const parsed = rows
+    .map((row) => ({
+      domain: String(row.domain ?? ""),
+      available: row.is_available === true,
+      restriction: typeof row.restriction === "string" ? row.restriction : null,
+      isAlternative: row.is_alternative === true,
+    }))
+    .filter((item) => item.domain);
+
+  // Preço só para o que está disponível, e um pedido por TLD (o cache trata o resto).
+  const pricedTlds = [
+    ...new Set(parsed.filter((item) => item.available).map((item) => tldOf(item.domain))),
+  ];
+  const prices = new Map<string, DomainCatalogPrice | null>();
+  await Promise.all(
+    pricedTlds.map(async (tld) => {
+      prices.set(tld, await resolveDomainCatalogPrice(tld));
+    }),
   );
 
-  const rows = payload?.data ?? [];
-  const suggestions: DomainSuggestion[] = rows.map((row) => ({
-    domain: String(row.domain ?? ""),
-    available: row.is_available === true || row.available === true,
-    priceBRL: typeof row.price === "number" ? row.price / 100 : null,
-    currency: typeof row.currency === "string" ? row.currency : "BRL",
-  }));
+  const suggestions: DomainSuggestion[] = parsed.map((item) => {
+    const price = item.available ? prices.get(tldOf(item.domain)) ?? null : null;
+    return {
+      ...item,
+      firstYearBRL: price?.firstYearBRL ?? null,
+      renewalBRL: price?.renewalBRL ?? null,
+    };
+  });
 
-  return { suggestions: suggestions.filter((item) => item.domain), enabled: true };
+  return { suggestions, enabled: true };
 }
 
 export type PurchaseDomainResult =
@@ -480,20 +598,35 @@ export async function purchaseDomainForPage(params: {
     };
   }
 
-  const availability = await checkDomainAvailability({ query: check.apex.split(".")[0] ?? "" });
+  // O TLD pedido, não a lista padrão: comprar `exemplo.io` com a lista de
+  // omissão daria "já não está disponível" para um domínio livre.
+  const availability = await checkDomainAvailability({
+    query: check.apex.split(".")[0] ?? "",
+    tlds: [tldOf(check.apex)],
+  });
   const match = availability.suggestions.find((item) => item.domain === check.apex);
   if (!match?.available) {
     return { ok: false, code: "unavailable", message: "Esse domínio já não está disponível." };
   }
 
-  const order = await hostingerRequest<{ data?: Record<string, unknown> }>(
+  const price = await resolveDomainCatalogPrice(tldOf(check.apex));
+  if (!price) {
+    return {
+      ok: false,
+      code: "unavailable",
+      message: "Não conseguimos confirmar o preço deste domínio. Nada foi cobrado.",
+    };
+  }
+
+  const order = await hostingerRequest<unknown>(
     "/api/domains/v1/portfolio",
     {
       method: "POST",
       body: JSON.stringify({
         domain: check.apex,
-        item_id: match.domain,
-        payment_method_id: null,
+        // `item_id` é o preço do catálogo, não o nome do domínio — o registador
+        // recusa a compra sem ele.
+        item_id: price.itemId,
         domain_contacts: params.whoisProfileId
           ? { owner_id: params.whoisProfileId, admin_id: params.whoisProfileId }
           : undefined,
@@ -501,17 +634,31 @@ export async function purchaseDomainForPage(params: {
     },
   );
 
-  if (!order?.data) {
+  /**
+   * `hostingerRequest` devolve `null` só quando a chamada falhou (rede ou
+   * estado HTTP de erro). Qualquer resposta com corpo conta como compra feita.
+   *
+   * A tolerância aqui é deliberada e assimétrica: dizer "falhou" depois de o
+   * dinheiro ter saído é o pior desfecho possível — o cliente pagou, o domínio
+   * é dele, e nós dissemos que não era. Na dúvida, assumir que foi.
+   */
+  if (order === null) {
     return {
       ok: false,
       code: "failed",
-      message: "O registador não concluiu a compra. Nada foi cobrado; tente novamente.",
+      message: "O registador não concluiu a compra. Tente novamente ou fale com o suporte.",
     };
   }
 
-  const orderRef = typeof order.data.id === "string" || typeof order.data.id === "number"
-    ? String(order.data.id)
-    : null;
+  const orderBody = (
+    order && typeof order === "object" && "data" in (order as Record<string, unknown>)
+      ? (order as { data: unknown }).data
+      : order
+  ) as Record<string, unknown> | null;
+
+  const rawRef = orderBody && typeof orderBody === "object" ? orderBody.id : null;
+  const orderRef =
+    typeof rawRef === "string" || typeof rawRef === "number" ? String(rawRef) : null;
 
   const { data, error } = await sb
     .from("landing_page_domains")

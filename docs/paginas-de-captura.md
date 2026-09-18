@@ -37,12 +37,14 @@ painel inteiro.
 | Host | Resultado |
 |---|---|
 | `mychatcrm.com(.br)`, `NEXT_PUBLIC_SITE_URL`, `*.vercel.app`, `localhost` | app, sempre |
+| qualquer host, **sem `LANDING_PAGES_DOMAIN`** | app, sempre (módulo adormecido) |
 | apex do domínio das páginas | app (institucional) |
 | `<slug>.<domínio-das-páginas>` | página, resolvida por slug |
 | qualquer outro host | página, resolvida por domínio ativo |
 
-**Fecha para o app por omissão.** Host desconhecido sem configuração nenhuma
-continua a ser a aplicação.
+**Fecha para o app por omissão.** Sem domínio configurado o módulo não desvia
+uma única requisição — "adormecido" quer dizer "não muda nada", não "muda um
+pouco".
 
 Num host de página, o caminho é classificado em três (`classifyLandingPath`):
 
@@ -66,6 +68,15 @@ Três origens, na tabela `landing_page_domains`:
   apontado no mesmo passo. Exige `HOSTINGER_API_TOKEN` **e**
   `LANDING_DOMAIN_PURCHASE_ENABLED=true` — é dinheiro a sair, e registo de
   domínio não se desfaz.
+
+  A consulta de disponibilidade devolve `is_available` e `restriction` (o
+  `.com.br` pede CPF ou CNPJ) mas **não devolve preço**, e a compra exige o
+  `item_id` do **catálogo**, não o nome do domínio. As duas coisas vêm de
+  `/api/billing/v1/catalog`, com cache de 6 h por TLD.
+
+  A tela mostra o preço do **primeiro ano e o da renovação** — são diferentes
+  (`.com.br`: R$ 39,99 depois R$ 64,99) e mostrar só o primeiro é o truque de
+  venda que não vamos repetir.
 
 Apex recebe `A`; subdomínio recebe `CNAME`. Apex não aceita CNAME, e subdomínio
 com `A` quebra quando o IP da plataforma muda.
@@ -151,8 +162,11 @@ Google Ads API, cuja aprovação demora semanas.
 
 - `requireLandingAccess` é a porta única das rotas. O middleware valida papel em
   `/dashboard/*` e **nunca** em `/api/*` — cada rota de cliente precisa do seu
-  próprio guard. Publicar, arquivar, comprar domínio e gastar crédito são só do
-  titular.
+  próprio guard.
+- **Leitura acompanha o menu** (titular, diretor e gerente; vendedor não):
+  quem vê o item na barra lateral tem de conseguir abrir a tela, senão o painel
+  mostra um erro em vez de conteúdo. **Escrita é só do titular** (`manageOnly`):
+  publicar, arquivar, comprar domínio e gastar crédito.
 - O conteúdo do banco entra como **texto** e é interpolado pelo React, que
   escapa. Não há `dangerouslySetInnerHTML` com conteúdo de tenant em lugar
   nenhum — só com a folha de estilos, montada a partir de cores validadas por
@@ -160,6 +174,30 @@ Google Ads API, cuja aprovação demora semanas.
 - O formulário público tem limite por IP, campo-armadilha para robô e
   deduplicação por telefone numa janela de uma hora.
 - O IP é guardado em hash, nunca em claro.
+
+## Arquivar, nunca apagar — e o endereço não volta ao mercado
+
+Arquivar mantém a linha, então o slug continua ocupado. É de propósito: um
+endereço que já esteve num anúncio não pode ser reatribuído a outro tenant, ou
+o tráfego residual de uma campanha antiga cairia na página de um estranho.
+
+Pelo mesmo motivo a página arquivada guarda o histórico de submissões, que é a
+prova de onde vieram os leads daquela campanha.
+
+## Limitação conhecida: `robots.txt` e `sitemap.xml`
+
+O matcher do middleware exclui `txt` e `xml` de propósito — sem isso o next-intl
+reescrevia `/robots.txt` para `/pt-BR/robots.txt` e o site ficava sem mapa e sem
+regras de rastreio (foi assim durante meses). O efeito colateral é que
+`https://<domínio-do-cliente>/robots.txt` devolve o robots da MyChatCRM, com as
+linhas `Host:` e `Sitemap:` a apontar para `www.mychatcrm.com.br`.
+
+Impacto real é pequeno: a regra é `Allow: /`, então a página do cliente continua
+rastreável, referência de sitemap entre domínios diferentes é ignorada pelo
+Google, e as páginas de campanha nascem `noindex` de qualquer forma.
+
+**Não corrigir mexendo no matcher.** Se um dia incomodar, a saída é servir um
+robots por host a partir de um route handler que não dependa do middleware.
 
 ## Comportamento em falha
 

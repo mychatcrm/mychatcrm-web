@@ -109,9 +109,17 @@ describe("roteamento por host das páginas", () => {
     expect(classifyLandingPath("/api/public/landing-outro")).toBe("blocked");
   });
 
-  it("fecha para o app quando nada está configurado", () => {
-    const empty = { appHosts: [], pagesDomain: null };
-    expect(resolveLandingHost({ host: "qualquer.com", pathname: "/", config: empty }).kind).toBe("app");
+  it("fica adormecido sem domínio configurado, seja qual for o host", () => {
+    // "Adormecido" tem de querer dizer "não muda nada". Um host apontado para o
+    // projeto não pode passar a receber 404 só porque o módulo entrou no código.
+    for (const appHosts of [[], config.appHosts]) {
+      const dormant = { appHosts, pagesDomain: null };
+      for (const host of ["qualquer.com", "cliente.com.br", "lp.exemplo.com"]) {
+        for (const pathname of ["/", "/planos", "/dashboard"]) {
+          expect(resolveLandingHost({ host, pathname, config: dormant }).kind).toBe("app");
+        }
+      }
+    }
   });
 
   it("extrai o slug apenas de um nível de subdomínio", () => {

@@ -721,8 +721,18 @@ function PageDetail({
 type DomainSuggestion = {
   domain: string;
   available: boolean;
-  priceBRL: number | null;
-  currency: string;
+  restriction: string | null;
+  isAlternative: boolean;
+  firstYearBRL: number | null;
+  renewalBRL: number | null;
+};
+
+function brl(value: number): string {
+  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+const RESTRICTION_LABEL: Record<string, string> = {
+  requires_cpf_or_cnpj: "Exige CPF ou CNPJ brasileiro",
 };
 
 function DomainsPanel({
@@ -858,10 +868,17 @@ function DomainsPanel({
                   <DsBadge variant={item.available ? "success" : "neutral"}>
                     {item.available ? "Disponível" : "Indisponível"}
                   </DsBadge>
-                  {item.priceBRL !== null ? (
+                  {item.firstYearBRL !== null ? (
                     <span className="text-xs text-mc-muted">
-                      {item.priceBRL.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                      /ano
+                      {brl(item.firstYearBRL)} no 1º ano
+                      {item.renewalBRL !== null && item.renewalBRL !== item.firstYearBRL
+                        ? ` · depois ${brl(item.renewalBRL)}/ano`
+                        : "/ano"}
+                    </span>
+                  ) : null}
+                  {item.restriction ? (
+                    <span className="text-xs text-mc-muted">
+                      {RESTRICTION_LABEL[item.restriction] ?? item.restriction}
                     </span>
                   ) : null}
 
@@ -869,7 +886,11 @@ function DomainsPanel({
                     <div className="ml-auto flex items-center gap-2">
                       {confirming === item.domain ? (
                         <>
-                          <span className="text-xs text-mc-muted">Confirmar compra?</span>
+                          <span className="text-xs text-mc-muted">
+                            Comprar {item.domain}
+                            {item.firstYearBRL !== null ? ` por ${brl(item.firstYearBRL)}` : ""}? O
+                            registo é por um ano e não pode ser desfeito.
+                          </span>
                           <DsButton
                             size="sm"
                             isLoading={busy === `purchase:${item.domain}`}

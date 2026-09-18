@@ -107,7 +107,15 @@ export function LandingRenderer({
       </div>
     ) : null;
 
-  let heroRendered = false;
+  /**
+   * O formulário sobe para dentro do herói, mas só pode existir UMA vez.
+   *
+   * Decidir isso com uma variável mutável durante o `map` dependia da ordem dos
+   * blocos: com o formulário antes do herói, ele renderizava nos dois sítios —
+   * dois formulários e dois elementos com o mesmo `id`, que quebra a âncora do
+   * botão e a acessibilidade. A decisão é tomada antes, sobre a lista inteira.
+   */
+  const hasHero = content.blocks.some((block) => block.kind === "hero");
 
   return (
     <div className="mcl">
@@ -118,7 +126,6 @@ export function LandingRenderer({
 
         switch (block.kind) {
           case "hero": {
-            heroRendered = true;
             return (
               <section key={key} className="mcl__section mcl__section--hero">
                 <div className="mcl__wrap mcl__hero-layout">
@@ -188,8 +195,8 @@ export function LandingRenderer({
             );
 
           case "form":
-            // Já renderizado dentro do herói. Sem herói, entra aqui.
-            if (heroRendered) return null;
+            // Com herói, o formulário já está lá dentro. Sem herói, entra aqui.
+            if (hasHero) return null;
             return (
               <section key={key} className="mcl__section">
                 <div className="mcl__wrap">{formElement}</div>

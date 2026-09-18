@@ -113,14 +113,18 @@ export function resolveLandingHost(params: {
   // O apex do domínio das páginas é institucional, não é página de ninguém.
   if (pagesDomain && host === pagesDomain) return { kind: "app" };
 
-  const slug = extractPlatformSlug(host, pagesDomain);
-  const isPlatformSubdomain = slug !== null;
+  /**
+   * Módulo adormecido: sem `LANDING_PAGES_DOMAIN` não existe página nenhuma,
+   * então host desconhecido continua a ser a aplicação — exatamente como antes
+   * deste módulo existir.
+   *
+   * Sem esta porta, um host apontado para o projeto passaria a receber 404 em
+   * vez do site, só por o módulo ter entrado no código. "Adormecido" tem de
+   * querer dizer "não muda nada", não "muda um pouco".
+   */
+  if (!pagesDomain) return { kind: "app" };
 
-  // Sem domínio de páginas configurado, só hosts totalmente desconhecidos
-  // chegam aqui — e esses são domínios de cliente apontados para nós.
-  if (!isPlatformSubdomain && appHosts.size === 0 && !pagesDomain) {
-    return { kind: "app" };
-  }
+  const slug = extractPlatformSlug(host, pagesDomain);
 
   const pathKind = classifyLandingPath(params.pathname);
   if (pathKind === "blocked") {
