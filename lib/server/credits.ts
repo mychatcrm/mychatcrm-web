@@ -201,6 +201,30 @@ export async function grantCredits(params: {
   });
 }
 
+/**
+ * Concede o crédito de boas-vindas, uma vez só na vida do tenant.
+ *
+ * A chave de idempotência não tem data nem contador: é `welcome:<tenant>`, e
+ * é isso que garante que mexer no valor da variável depois não dá uma segunda
+ * rodada de crédito a quem já recebeu.
+ */
+export async function ensureWelcomeCredits(params: {
+  tenantId: string;
+  amount: number;
+  client?: SupabaseServiceClient;
+}): Promise<void> {
+  if (params.amount <= 0) return;
+  await grantCredits({
+    tenantId: params.tenantId,
+    amount: params.amount,
+    reason: "welcome_bonus",
+    idempotencyKey: `welcome:${params.tenantId}`,
+    refType: "welcome",
+    actor: "system",
+    client: params.client,
+  });
+}
+
 export type CreditLedgerEntry = {
   id: string;
   delta: number;

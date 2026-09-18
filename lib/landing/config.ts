@@ -113,6 +113,20 @@ export function landingPublicUrl(params: { slug: string; host?: string | null })
   return `https://${params.slug}.${domain}`;
 }
 
+/**
+ * Créditos dados uma vez a cada tenant, na primeira vez que abre as Páginas.
+ *
+ * Zero por omissão: não invento economia. Mas a carteira nasce vazia, e um
+ * cliente que abre a tela sem saldo nenhum não consegue gerar nada — fica com
+ * um produto que parece quebrado. Pôr um valor aqui é o interruptor para isso
+ * não acontecer enquanto os pacotes do Stripe não existirem.
+ */
+export function landingWelcomeCredits(): number {
+  const parsed = Number.parseInt(envValue("LANDING_WELCOME_CREDITS"), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(parsed, 500);
+}
+
 /** Token da API Hostinger, usada para comprar domínio e apontar DNS pelo painel. */
 export function hostingerApiToken(): string | null {
   return envValue("HOSTINGER_API_TOKEN") || null;

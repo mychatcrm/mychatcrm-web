@@ -10,11 +10,12 @@ import {
   isLandingPlatformSubdomainEnabled,
   landingPagesDomain,
   landingPublicUrl,
+  landingWelcomeCredits,
 } from "@/lib/landing/config";
 import { slugifyLandingName, validateLandingSlug } from "@/lib/landing/slug";
 import { LANDING_TEMPLATES } from "@/lib/landing/templates";
 import { resolveLandingPageAllowance } from "@/lib/credits/pricing";
-import { getCreditWallet } from "@/lib/server/credits";
+import { ensureWelcomeCredits, getCreditWallet } from "@/lib/server/credits";
 import { landingActorLabel, requireLandingAccess } from "@/lib/server/landing-page-guard";
 import {
   createLandingPage,
@@ -33,6 +34,14 @@ export async function GET() {
   const guard = await requireLandingAccess();
   if (!guard.ok) return guard.response;
   const { session, sb, canManage } = guard;
+
+  // Antes de ler o saldo: senão o cliente vê zero na primeira visita e só na
+  // segunda é que o crédito aparece.
+  await ensureWelcomeCredits({
+    tenantId: session.tenantId,
+    amount: landingWelcomeCredits(),
+    client: sb,
+  });
 
   const [list, wallet, domains] = await Promise.all([
     listLandingPages({ tenantId: session.tenantId, client: sb }),
