@@ -8,6 +8,7 @@
  * O limite do plano é conferido AQUI, não na criação: rascunho é ilimitado,
  * página publicada é que ocupa lugar.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import { isLandingModuleConfigured, landingPublicUrl } from "@/lib/landing/config";
 import { resolveLandingPageAllowance } from "@/lib/credits/pricing";
@@ -16,6 +17,7 @@ import {
   sumTenantEntitlementQuantity,
 } from "@/lib/server/billing-addons";
 import { requireLandingAccess } from "@/lib/server/landing-page-guard";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 import {
   countPublishedLandingPages,
   getLandingPage,
@@ -100,6 +102,13 @@ export async function POST(request: Request, { params }: { params: { id: string 
   });
   if (!ok) return NextResponse.json({ error: "Não foi possível publicar." }, { status: 500 });
 
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    action: "page_published",
+    resourceId: page.id,
+    metadata: { slug: page.slug, versionNo: version.versionNo },
+  });
+
   return NextResponse.json({
     published: true,
     versionId,
@@ -121,5 +130,13 @@ export async function DELETE(_request: Request, { params }: { params: { id: stri
     client: sb,
   });
   if (!ok) return NextResponse.json({ error: "Não foi possível despublicar." }, { status: 500 });
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    action: "page_unpublished",
+    resourceId: page.id,
+    metadata: { slug: page.slug },
+  });
+
   return NextResponse.json({ published: false });
 }

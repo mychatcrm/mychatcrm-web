@@ -5,6 +5,7 @@
  * texto que não chegou é a forma mais rápida de destruir a confiança na moeda
  * inteira, e o cliente não tem como provar que não recebeu.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import { canAffordAction, creditMoveMessage } from "@/lib/credits/ledger";
 import { creditCostForAction } from "@/lib/credits/pricing";
@@ -20,6 +21,7 @@ import {
   insertLandingVersion,
   setLandingDraftVersion,
 } from "@/lib/server/landing-pages-db";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 import {
   generateLandingContent,
   loadLandingAgentContext,
@@ -152,6 +154,17 @@ export async function POST(request: Request, { params }: { params: { id: string 
       refId: page.id,
       client: sb,
     });
+    recordLandingAudit({
+      tenantId: session.tenantId,
+      action: "credits_refunded",
+      resourceId: page.id,
+      status: "error",
+      severity: "warning",
+      resultCode: generation.reason,
+      idempotencyKey: attemptToken,
+      metadata: { creditAction: action, refunded: refund.applied },
+    });
+
     return NextResponse.json(
       {
         error: "Não foi possível gerar o conteúdo agora. O crédito foi devolvido.",
@@ -196,6 +209,20 @@ export async function POST(request: Request, { params }: { params: { id: string 
     pageId: page.id,
     versionId: version.id,
     client: sb,
+  });
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    actorId: landingActorLabel(session),
+    action: "credits_spent",
+    resourceId: page.id,
+    idempotencyKey: attemptToken,
+    metadata: {
+      creditAction: action,
+      credits: creditCostForAction(action),
+      balanceAfter: debit.balance,
+      versionId: version.id,
+    },
   });
 
   return NextResponse.json({

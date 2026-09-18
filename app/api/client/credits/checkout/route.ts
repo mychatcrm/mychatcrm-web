@@ -5,6 +5,7 @@
  * renova sozinho. O saldo só entra na carteira quando o webhook confirmar o
  * pagamento — nunca aqui, porque a sessão de checkout pode ser abandonada.
  */
+// operational-audit: reconciled — o crédito só existe quando o webhook do Stripe o grava no ledger, que é a trilha.
 import { NextResponse } from "next/server";
 import { SITE_URL } from "@/lib/constants";
 import { findCreditPack } from "@/lib/credits/pricing";

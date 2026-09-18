@@ -5,6 +5,7 @@
  * Uma página apagada levaria junto o histórico de submissões que prova de onde
  * vieram os leads daquela campanha.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import { landingPublicUrl } from "@/lib/landing/config";
 import { landingActorLabel, requireLandingAccess } from "@/lib/server/landing-page-guard";
@@ -17,6 +18,7 @@ import {
 } from "@/lib/server/landing-pages-db";
 import { dnsRecordsForDomain, listLandingDomains } from "@/lib/server/landing-domains";
 import { summarizeLandingSubmissions } from "@/lib/server/landing-submission";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -112,5 +114,14 @@ export async function DELETE(_request: Request, { params }: { params: { id: stri
     client: sb,
   });
   if (!ok) return NextResponse.json({ error: "Não foi possível arquivar." }, { status: 500 });
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    actorId: landingActorLabel(session),
+    action: "page_archived",
+    resourceId: page.id,
+    metadata: { slug: page.slug },
+  });
+
   return NextResponse.json({ archived: true });
 }

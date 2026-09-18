@@ -9,14 +9,16 @@
  * - só aceita as chaves declaradas na versão publicada;
  * - limite por IP, porque um formulário aberto na internet é alvo de robô.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
-import { parseLandingAttribution } from "@/lib/landing/attribution";
+import { inferAttributionChannel, parseLandingAttribution } from "@/lib/landing/attribution";
 import { landingHostConfig } from "@/lib/landing/config";
 import { extractPlatformSlug } from "@/lib/landing/host-routing";
 import { checkInMemoryRateLimit } from "@/lib/rate-limit-in-memory";
 import { getClientIpFromRequest } from "@/lib/get-client-ip";
 import { resolvePublishedLandingByHost } from "@/lib/server/landing-pages-db";
 import { recordLandingSubmission } from "@/lib/server/landing-submission";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -103,6 +105,23 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ error: result.message }, { status: result.code === "unavailable" ? 503 : 500 });
   }
+
+  /**
+   * O evento que mais importa da trilha: entrou lead por esta página.
+   * `actorType: "customer"` seria mentira — quem submeteu é um visitante
+   * anónimo, não o tenant; por isso o ator é o sistema e nada de PII entra.
+   */
+  recordLandingAudit({
+    tenantId: published.page.tenantId,
+    actorType: "system",
+    action: "submission_received",
+    resourceId: published.page.id,
+    metadata: {
+      duplicate: result.duplicate,
+      leadCreated: Boolean(result.leadId),
+      channel: inferAttributionChannel(attribution),
+    },
+  });
 
   return NextResponse.json({ ok: true, message: result.successMessage });
 }

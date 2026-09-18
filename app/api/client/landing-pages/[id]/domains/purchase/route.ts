@@ -5,10 +5,12 @@
  * registra um domínio por um ano e cobra por isso, e registo de domínio não se
  * desfaz. A interface tem de ter mostrado o preço e o nome exato antes.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import { isDomainPurchaseEnabled } from "@/lib/landing/config";
 import { requireLandingAccess } from "@/lib/server/landing-page-guard";
 import { getLandingPage } from "@/lib/server/landing-pages-db";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 import { purchaseDomainForPage } from "@/lib/server/landing-domains";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +61,14 @@ export async function POST(request: Request, { params }: { params: { id: string 
       result.code === "disabled" ? 503 : result.code === "taken" ? 409 : result.code === "unavailable" ? 410 : 400;
     return NextResponse.json({ error: result.message, code: result.code }, { status });
   }
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    action: "domain_purchased",
+    resourceId: page.id,
+    critical: true,
+    metadata: { host: result.domain.host, orderRef: result.orderRef ?? "" },
+  });
 
   return NextResponse.json(
     { domain: result.domain, orderRef: result.orderRef, message: result.message },

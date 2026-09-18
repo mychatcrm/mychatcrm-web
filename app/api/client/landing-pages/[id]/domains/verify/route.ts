@@ -5,9 +5,11 @@
  * certificado sair. Pode ser chamado quantas vezes o cliente quiser — o DNS
  * demora e ele vai clicar em "verificar" várias vezes.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import { requireLandingAccess } from "@/lib/server/landing-page-guard";
 import { getLandingPage } from "@/lib/server/landing-pages-db";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 import { verifyLandingDomain } from "@/lib/server/landing-domains";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +39,16 @@ export async function POST(request: Request, { params }: { params: { id: string 
     tenantId: session.tenantId,
     domainId,
     client: sb,
+  });
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    action: "domain_verified",
+    resourceId: page.id,
+    status: result.verified ? "completed" : "blocked",
+    severity: result.verified ? "info" : "warning",
+    resultCode: result.status,
+    metadata: { domainId },
   });
 
   return NextResponse.json(result, { status: result.verified ? 200 : 202 });

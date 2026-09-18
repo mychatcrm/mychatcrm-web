@@ -4,6 +4,7 @@
  * GET  — lista, limite do plano, saldo de créditos e estado da configuração.
  * POST — cria a página a partir de um modelo (não gasta crédito: gerar gasta).
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import {
   isLandingModuleConfigured,
@@ -23,6 +24,7 @@ import {
   resolveAvailableSlug,
 } from "@/lib/server/landing-pages-db";
 import { listLandingDomains } from "@/lib/server/landing-domains";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 import {
   listTenantBillingEntitlements,
   sumTenantEntitlementQuantity,
@@ -35,19 +37,30 @@ export async function GET() {
   if (!guard.ok) return guard.response;
   const { session, sb, canManage } = guard;
 
-  // Antes de ler o saldo: senão o cliente vê zero na primeira visita e só na
-  // segunda é que o crédito aparece.
-  await ensureWelcomeCredits({
-    tenantId: session.tenantId,
-    amount: landingWelcomeCredits(),
-    client: sb,
-  });
-
-  const [list, wallet, domains] = await Promise.all([
+  const [list, initialWallet, domains] = await Promise.all([
     listLandingPages({ tenantId: session.tenantId, client: sb }),
     getCreditWallet(session.tenantId, sb),
     listLandingDomains({ tenantId: session.tenantId, client: sb }),
   ]);
+
+  /**
+   * Crédito de boas-vindas só para quem nunca recebeu nada.
+   *
+   * A concessão é idempotente no banco, então chamá-la sempre seria correto —
+   * mas somaria uma ida ao banco a cada carregamento da tela, para sempre, por
+   * causa de algo que acontece uma vez na vida do tenant. `lifetimeGranted`
+   * responde isso com o dado que já veio na leitura da carteira.
+   */
+  const welcomeAmount = landingWelcomeCredits();
+  let wallet = initialWallet;
+  if (welcomeAmount > 0 && wallet.available && wallet.lifetimeGranted === 0) {
+    await ensureWelcomeCredits({
+      tenantId: session.tenantId,
+      amount: welcomeAmount,
+      client: sb,
+    });
+    wallet = await getCreditWallet(session.tenantId, sb);
+  }
 
   const extra = await listTenantBillingEntitlements({
     tenantId: session.tenantId,
@@ -150,6 +163,14 @@ export async function POST(request: Request) {
     const status = created.code === "schema_missing" ? 503 : created.code === "slug_taken" ? 409 : 400;
     return NextResponse.json({ error: created.message, code: created.code }, { status });
   }
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    actorId: landingActorLabel(session),
+    action: "page_created",
+    resourceId: created.page.id,
+    metadata: { slug: created.page.slug, template: String(body.templateId ?? "direto") },
+  });
 
   return NextResponse.json(
     {

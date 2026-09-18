@@ -10,6 +10,7 @@
  * admin não concede duas vezes. Cada movimento fica no extrato com o rótulo de
  * quem o fez, então concessão nunca se confunde com compra.
  */
+// operational-audit: reconciled — cada concessão fica no credit_ledger com actor e chave de idempotência.
 import { NextResponse } from "next/server";
 import { getAdminSessionFromCookies, hasAdminAccess } from "@/lib/admin-auth";
 import { getCreditWallet, grantCredits, listCreditLedger } from "@/lib/server/credits";

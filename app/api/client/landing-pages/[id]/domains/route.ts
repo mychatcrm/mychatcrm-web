@@ -6,9 +6,11 @@
  * separado — `POST .../domains/verify` — porque o DNS demora, e o cliente
  * precisa de poder voltar depois sem refazer nada.
  */
+// operational-audit: reconciled — recordLandingAudit (lib/server/landing-audit.ts) regista dinheiro, exposição pública e captação.
 import { NextResponse } from "next/server";
 import { requireLandingAccess } from "@/lib/server/landing-page-guard";
 import { getLandingPage } from "@/lib/server/landing-pages-db";
+import { recordLandingAudit } from "@/lib/server/landing-audit";
 import {
   attachExistingDomain,
   dnsRecordsForDomain,
@@ -70,6 +72,13 @@ export async function POST(request: Request, { params }: { params: { id: string 
     return NextResponse.json({ error: attached.message, code: attached.code }, { status });
   }
 
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    action: "domain_attached",
+    resourceId: page.id,
+    metadata: { host: attached.domain.host, source: attached.domain.source },
+  });
+
   return NextResponse.json(
     { domain: attached.domain, records: attached.records },
     { status: 201 },
@@ -96,5 +105,13 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
     client: sb,
   });
   if (!ok) return NextResponse.json({ error: "Não foi possível remover." }, { status: 500 });
+
+  recordLandingAudit({
+    tenantId: session.tenantId,
+    action: "domain_removed",
+    resourceId: page.id,
+    metadata: { domainId },
+  });
+
   return NextResponse.json({ removed: true });
 }
