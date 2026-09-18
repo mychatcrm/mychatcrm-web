@@ -17,6 +17,8 @@ import {
   sessionCanAccessDashboardRoute,
 } from "@/lib/organization-role";
 import { routing } from "@/i18n/routing";
+import { landingHostConfig } from "@/lib/landing/config";
+import { resolveLandingHost } from "@/lib/landing/host-routing";
 import { resolveLegacyLegalRedirect } from "@/lib/legal-legacy-redirects";
 import { resolveUnlocalizedPublicPath } from "@/lib/unlocalized-public-paths";
 
@@ -60,7 +62,46 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // 2. Maintenance status API — always pass through
+  // 2. Páginas de captura dos clientes.
+  //
+  // Vem antes de tudo porque um domínio de cliente não é o SaaS: não tem
+  // locale, não tem sessão, não tem manutenção. A decisão é uma função pura
+  // sobre o cabeçalho Host (`resolveLandingHost`), sem ida ao banco — isto roda
+  // em cada pedido do painel inteiro.
+  //
+  // Fecha para o app por omissão: host desconhecido continua a ser a aplicação,
+  // exatamente como era antes deste módulo existir.
+  const landing = resolveLandingHost({
+    host: request.headers.get("host"),
+    pathname,
+    config: landingHostConfig(),
+  });
+
+  if (landing.kind === "blocked") {
+    // `/dashboard`, `/admin` e a API privada não existem no domínio das
+    // páginas. Sem esta porta, publicar uma página daria a qualquer visitante
+    // um caminho para o painel sob a mesma origem.
+    const dest = request.nextUrl.clone();
+    dest.pathname = "/";
+    dest.search = "";
+    return NextResponse.redirect(dest, 307);
+  }
+
+  if (landing.kind === "landing") {
+    const dest = request.nextUrl.clone();
+    dest.pathname = landing.rewritePath;
+    return NextResponse.rewrite(dest);
+  }
+
+  // Caminho interno do renderizador: só se chega lá por reescrita.
+  if (pathname === "/sites" || pathname.startsWith("/sites/")) {
+    const dest = request.nextUrl.clone();
+    dest.pathname = "/";
+    dest.search = "";
+    return NextResponse.redirect(dest, 307);
+  }
+
+  // 3. Maintenance status API — always pass through
   if (isMaintenanceStatusApiPath(pathname)) {
     return NextResponse.next();
   }

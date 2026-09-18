@@ -23,6 +23,9 @@ import {
 } from "@/lib/server/commercial-store-db";
 import { findCouponByStripePromoCodeId } from "@/lib/server/checkout-coupon";
 import { fulfillBillingAddonFromCheckout, syncBillingAddonSubscription } from "@/lib/server/billing-addons";
+import { grantCredits } from "@/lib/server/credits";
+import { buildPurchaseIdempotencyKey } from "@/lib/credits/ledger";
+import { findCreditPack } from "@/lib/credits/pricing";
 import { getTenantLeadQuotaSnapshot } from "@/lib/server/lead-quota";
 import { getTenantPlanSnapshot } from "@/lib/server/tenant-plan-snapshot";
 import { syncLegacyWhatsAppSlotEntitlement } from "@/lib/server/whatsapp-extra-slots-db";
@@ -132,6 +135,41 @@ async function fulfillBillingAddonCheckout(session: Stripe.Checkout.Session): Pr
   });
 }
 
+/**
+ * Credita o pacote comprado.
+ *
+ * A quantidade vem dos metadados que a nossa própria rota escreveu, e o pacote
+ * é reconferido contra o catálogo: metadado adulterado não pode virar saldo.
+ */
+async function fulfillCreditPackCheckout(
+  session: Stripe.Checkout.Session,
+  eventId: string,
+): Promise<void> {
+  const tenantId = session.metadata?.tenant_id?.trim() || session.client_reference_id?.trim() || "";
+  const pack = findCreditPack(session.metadata?.pack_code);
+  if (!tenantId || !pack) {
+    console.error("[stripe-webhook] credit_pack sem tenant ou pacote", {
+      tenantId,
+      packCode: session.metadata?.pack_code,
+    });
+    return;
+  }
+
+  const result = await grantCredits({
+    tenantId,
+    amount: pack.credits,
+    reason: `credit_pack:${pack.code}`,
+    idempotencyKey: buildPurchaseIdempotencyKey(eventId),
+    refType: "stripe_checkout",
+    refId: session.id,
+    actor: "stripe",
+  });
+
+  if (!result.applied && result.reasonCode !== "duplicate") {
+    console.error("[stripe-webhook] crédito não aplicado", { tenantId, reason: result.reasonCode });
+  }
+}
+
 function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
   const subscription = invoice.parent?.subscription_details?.subscription;
   return typeof subscription === "string" ? subscription : subscription?.id ?? null;
@@ -155,7 +193,14 @@ export async function POST(req: NextRequest) {
         const session = event.data.object as Stripe.Checkout.Session;
         // Provisiona apenas se o pagamento foi confirmado (assinatura → always paid)
         if (session.payment_status === "paid" || session.mode === "subscription") {
-          if (session.metadata?.type === "billing_addon") {
+          if (session.metadata?.type === "credit_pack") {
+            // Créditos entram pelo ledger, que é idempotente pela chave do
+            // evento: a Stripe reenvia o mesmo `checkout.session.completed`
+            // quando a nossa resposta demora, e creditar duas vezes seria
+            // dinheiro que não entrou.
+            await fulfillCreditPackCheckout(session, event.id);
+            break;
+          } else if (session.metadata?.type === "billing_addon") {
             // Entitlements are the source of truth for new capacity purchases.
             // This path never provisions a tenant or changes the main plan.
             await fulfillBillingAddonCheckout(session);

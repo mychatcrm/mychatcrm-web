@@ -11,7 +11,9 @@ import {
 export const dynamic = "force-dynamic";
 
 function requestedKind(value: string | null): BillingAddonKind | undefined {
-  return value === "lead_capacity" || value === "whatsapp_line" || value === "api_connector" ? value : undefined;
+  return value === "lead_capacity" || value === "whatsapp_line" || value === "api_connector" || value === "landing_page"
+    ? value
+    : undefined;
 }
 
 /** Authenticated, tenant-safe storefront data. Stripe identifiers never leave the server. */

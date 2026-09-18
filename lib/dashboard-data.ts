@@ -6,6 +6,7 @@ export type DashboardRouteKey =
   | "agentes"
   | "conversas"
   | "integracoes-leads"
+  | "paginas"
   | "colaboradores"
   | "equipes"
   | "crm"
