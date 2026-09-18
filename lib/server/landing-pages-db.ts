@@ -546,6 +546,30 @@ export async function resolvePublishedLandingByHost(params: {
   const page = parsePage(pageRow);
   if (!page.publishedVersionId) return null;
 
+  /**
+   * Conta cancelada tira a página do ar.
+   *
+   * O caminho do painel já barra o cancelado (`requireActiveClientSession`),
+   * mas o renderizador público não tem sessão nenhuma para validar. Sem esta
+   * checagem, um cliente que cancelou continuava a captar leads para um CRM ao
+   * qual já não tem acesso — e nós continuávamos a servir a página dele de
+   * graça, no nosso domínio, respondendo pelo conteúdo.
+   *
+   * Falha ABERTA de propósito: se a leitura do tenant falhar, a página serve.
+   * Tirar do ar a campanha paga de um cliente adimplente por causa de um erro
+   * de banco é pior do que servir por mais alguns minutos a de um cancelado.
+   */
+  const { data: tenantRow, error: tenantError } = await sb
+    .from("tenants")
+    .select("status")
+    .eq("id", page.tenantId)
+    .maybeSingle();
+
+  if (!tenantError && tenantRow) {
+    const status = String((tenantRow as Record<string, unknown>).status ?? "").toLowerCase();
+    if (status === "cancelada") return null;
+  }
+
   const version = await getLandingVersion({ versionId: page.publishedVersionId, client: sb });
   if (!version) return null;
 

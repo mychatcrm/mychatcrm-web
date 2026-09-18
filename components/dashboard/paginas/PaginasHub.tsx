@@ -42,7 +42,13 @@ type DetailPayload = {
   published: { id: string; versionNo: number } | null;
   versions: Array<{ id: string; versionNo: number; generatedBy: string; variantLabel: string | null; createdAt: string }>;
   domains: DomainWithRecords[];
-  submissions: { total: number; last7Days: number; leadsCreated: number; byChannel: Record<string, number> };
+  submissions: {
+    total: number;
+    last7Days: number;
+    leadsCreated: number;
+    byChannel: Record<string, number>;
+    channelSampleSize?: number;
+  };
 };
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -485,6 +491,13 @@ function PageDetail({
       {Object.keys(submissions.byChannel).length > 0 ? (
         <div className="rounded-mc-base border border-mc-border bg-mc-surface p-4">
           <h4 className="text-sm font-semibold text-mc-text">De onde vieram</h4>
+          {submissions.channelSampleSize !== undefined &&
+          submissions.channelSampleSize < submissions.total ? (
+            <p className="mt-1 text-xs text-mc-muted">
+              Com base nos {submissions.channelSampleSize.toLocaleString("pt-BR")} envios mais
+              recentes.
+            </p>
+          ) : null}
           <ul className="mt-2 flex flex-wrap gap-2">
             {Object.entries(submissions.byChannel).map(([channel, count]) => (
               <li key={channel} className="rounded-mc-base bg-mc-surface-2 px-3 py-1 text-xs text-mc-text">
