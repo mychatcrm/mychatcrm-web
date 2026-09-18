@@ -117,6 +117,27 @@ crédito; o webhook do Stripe reenviado não credita duas vezes.
 **Se a geração falhar depois do débito, o crédito é devolvido** — automático, no
 mesmo pedido.
 
+### A carteira nasce vazia — e isso quebra o primeiro contacto
+
+Um cliente que abre as Páginas sem saldo não consegue gerar nada e conclui que
+o produto não funciona. Dois interruptores, nenhum deles a inventar economia:
+
+- **`LANDING_WELCOME_CREDITS`** — crédito dado UMA vez a cada tenant, na
+  primeira vez que abre a tela. Zero por omissão. A chave de idempotência é
+  `welcome:<tenant>`, sem data nem contador: mudar o valor depois **não** dá uma
+  segunda rodada a quem já recebeu. Sugestão de lançamento: `10` (duas páginas
+  geradas).
+- **`POST /api/admin/credits`** — concessão a um tenant específico, para
+  cortesia, compensação por falha ou conta de demonstração. Exige permissão
+  `financeiro` no admin. Aceita `idempotencyKey` para o duplo clique não
+  conceder duas vezes, e o movimento fica no extrato com o rótulo de quem
+  concedeu — concessão nunca se confunde com compra.
+
+  ```
+  POST /api/admin/credits
+  { "tenantId": "tenant-xxxx", "amount": 20, "reason": "cortesia de lançamento" }
+  ```
+
 ### Páginas incluídas no plano
 
 Solo 1 · Equipa 3 · Escala 10 · Enterprise 50. Página extra publicada é um
