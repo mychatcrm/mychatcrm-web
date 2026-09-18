@@ -20,6 +20,12 @@ export type LandingHostConfig = {
   appHosts: string[];
   /** Domínio que serve os subdomínios grátis (`<slug>.<pagesDomain>`). */
   pagesDomain: string | null;
+  /**
+   * Aceitar domínios trazidos pelo cliente sem depender do domínio de páginas.
+   * São requisitos diferentes: o subdomínio grátis precisa de wildcard, o
+   * domínio do cliente é registado um a um.
+   */
+  customDomainsEnabled?: boolean;
 };
 
 export type LandingHostDecision =
@@ -114,15 +120,17 @@ export function resolveLandingHost(params: {
   if (pagesDomain && host === pagesDomain) return { kind: "app" };
 
   /**
-   * Módulo adormecido: sem `LANDING_PAGES_DOMAIN` não existe página nenhuma,
-   * então host desconhecido continua a ser a aplicação — exatamente como antes
-   * deste módulo existir.
+   * Módulo adormecido: sem domínio de páginas E sem domínios de cliente
+   * ligados, host desconhecido continua a ser a aplicação — exatamente como
+   * antes deste módulo existir.
    *
    * Sem esta porta, um host apontado para o projeto passaria a receber 404 em
    * vez do site, só por o módulo ter entrado no código. "Adormecido" tem de
    * querer dizer "não muda nada", não "muda um pouco".
    */
-  if (!pagesDomain) return { kind: "app" };
+  if (!pagesDomain && params.config.customDomainsEnabled !== true) {
+    return { kind: "app" };
+  }
 
   const slug = extractPlatformSlug(host, pagesDomain);
 

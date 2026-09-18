@@ -71,12 +71,38 @@ export function landingApexIp(): string {
   return envValue("LANDING_DNS_APEX_IP") || "76.76.21.21";
 }
 
-export function landingHostConfig(): { appHosts: string[]; pagesDomain: string | null } {
-  return { appHosts: landingAppHosts(), pagesDomain: landingPagesDomain() };
+/**
+ * Liga só o caminho do domínio do cliente, sem domínio de páginas.
+ *
+ * Existe porque as duas coisas têm requisitos diferentes: o subdomínio grátis
+ * (`<slug>.<domínio>`) precisa de um wildcard, que exige plano pago na
+ * hospedagem; o domínio que o cliente traz é registado um a um e funciona em
+ * qualquer plano. Amarrar os dois ao mesmo interruptor impedia de usar o que já
+ * funciona por causa do que ainda não está contratado.
+ */
+export function areLandingCustomDomainsEnabled(): boolean {
+  return envValue("LANDING_CUSTOM_DOMAINS_ENABLED") === "true";
 }
 
-/** Sem domínio configurado não há endereço público — a interface avisa em vez de publicar no vazio. */
+export function landingHostConfig(): {
+  appHosts: string[];
+  pagesDomain: string | null;
+  customDomainsEnabled: boolean;
+} {
+  return {
+    appHosts: landingAppHosts(),
+    pagesDomain: landingPagesDomain(),
+    customDomainsEnabled: areLandingCustomDomainsEnabled(),
+  };
+}
+
+/** Há pelo menos um caminho para publicar? Sem isto a interface avisa em vez de publicar no vazio. */
 export function isLandingModuleConfigured(): boolean {
+  return landingPagesDomain() !== null || areLandingCustomDomainsEnabled();
+}
+
+/** O endereço grátis só existe com o domínio de páginas (e o wildcard) configurado. */
+export function isLandingPlatformSubdomainEnabled(): boolean {
   return landingPagesDomain() !== null;
 }
 

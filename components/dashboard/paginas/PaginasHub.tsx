@@ -18,6 +18,7 @@ type PageWithUrl = LandingPageRecord & { publicUrl: string | null };
 
 type ListPayload = {
   configured: boolean;
+  platformSubdomainEnabled: boolean;
   pagesDomain: string | null;
   canManage: boolean;
   available: boolean;
@@ -119,8 +120,13 @@ export function PaginasHub({ session }: { session: ClientSession }) {
     <div className="flex flex-col gap-5">
       {!data.configured ? (
         <SetupNotice
-          title="Domínio das páginas por configurar"
-          body="Defina LANDING_PAGES_DOMAIN na Vercel para publicar. Sem ele, dá para criar e gerar, mas não para colocar no ar."
+          title="Endereço por configurar"
+          body="Defina LANDING_PAGES_DOMAIN (endereço grátis, precisa de wildcard) ou LANDING_CUSTOM_DOMAINS_ENABLED=true (domínio do próprio cliente, funciona em qualquer plano). Sem um dos dois, dá para criar e gerar, mas não para colocar no ar."
+        />
+      ) : !data.platformSubdomainEnabled ? (
+        <SetupNotice
+          title="Só com domínio próprio"
+          body="O endereço grátis da plataforma está desligado. Cada página precisa de um domínio do cliente ligado e verificado para ficar no ar."
         />
       ) : null}
 
@@ -142,16 +148,20 @@ export function PaginasHub({ session }: { session: ClientSession }) {
           hint={`Gerar uma página custa ${CREDIT_ACTION_COST.landing_generate_page}.`}
         />
         <StatCard
-          label="Endereço grátis"
-          value={data.pagesDomain ? `*.${data.pagesDomain}` : "—"}
-          hint="Cada página nasce com um endereço pronto."
+          label="Endereço"
+          value={data.pagesDomain ? `*.${data.pagesDomain}` : "Domínio próprio"}
+          hint={
+            data.platformSubdomainEnabled
+              ? "Cada página nasce com um endereço pronto."
+              : "Ligue o domínio do cliente na aba de domínios da página."
+          }
         />
       </div>
 
       {data.canManage ? (
         <CreatePageForm
           templates={data.templates}
-          pagesDomain={data.pagesDomain}
+          pagesDomain={data.platformSubdomainEnabled ? data.pagesDomain : null}
           defaultName={session.companyName ?? ""}
           onCreated={(pageId, message) => {
             setNotice(message);

@@ -5,7 +5,12 @@
  * POST — cria a página a partir de um modelo (não gasta crédito: gerar gasta).
  */
 import { NextResponse } from "next/server";
-import { isLandingModuleConfigured, landingPagesDomain, landingPublicUrl } from "@/lib/landing/config";
+import {
+  isLandingModuleConfigured,
+  isLandingPlatformSubdomainEnabled,
+  landingPagesDomain,
+  landingPublicUrl,
+} from "@/lib/landing/config";
 import { slugifyLandingName, validateLandingSlug } from "@/lib/landing/slug";
 import { LANDING_TEMPLATES } from "@/lib/landing/templates";
 import { resolveLandingPageAllowance } from "@/lib/credits/pricing";
@@ -51,6 +56,8 @@ export async function GET() {
   return NextResponse.json(
     {
       configured: isLandingModuleConfigured(),
+      /** Endereço grátis só existe com o wildcard; domínio próprio funciona sem ele. */
+      platformSubdomainEnabled: isLandingPlatformSubdomainEnabled(),
       pagesDomain: landingPagesDomain(),
       canManage,
       available: list.available,

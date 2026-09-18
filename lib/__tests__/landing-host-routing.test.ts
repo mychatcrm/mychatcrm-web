@@ -122,6 +122,29 @@ describe("roteamento por host das páginas", () => {
     }
   });
 
+  it("aceita domínio de cliente sem domínio de páginas configurado", () => {
+    // O subdomínio grátis precisa de wildcard (plano pago); o domínio que o
+    // cliente traz é registado um a um e funciona em qualquer plano. Amarrar os
+    // dois ao mesmo interruptor bloqueava o que já funciona.
+    const byoOnly = {
+      appHosts: config.appHosts,
+      pagesDomain: null,
+      customDomainsEnabled: true,
+    };
+
+    const decision = resolveLandingHost({ host: "cliente.com.br", pathname: "/", config: byoOnly });
+    expect(decision.kind).toBe("landing");
+    if (decision.kind === "landing") expect(decision.slug).toBeNull();
+
+    // A fronteira de segurança continua a valer.
+    expect(resolveLandingHost({ host: "cliente.com.br", pathname: "/admin", config: byoOnly }).kind)
+      .toBe("blocked");
+    // E os hosts do SaaS continuam intocados.
+    for (const host of config.appHosts) {
+      expect(resolveLandingHost({ host, pathname: "/", config: byoOnly }).kind).toBe("app");
+    }
+  });
+
   it("extrai o slug apenas de um nível de subdomínio", () => {
     expect(extractPlatformSlug("loja.mcpaginas.com.br", "mcpaginas.com.br")).toBe("loja");
     expect(extractPlatformSlug("a.b.mcpaginas.com.br", "mcpaginas.com.br")).toBeNull();

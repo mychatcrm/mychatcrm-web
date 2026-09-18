@@ -11,15 +11,21 @@ como fonte de leads, do mesmo jeito que o Meta Lead Ads já está aberto.
 
 ## Ligar o módulo
 
-Enquanto `LANDING_PAGES_DOMAIN` estiver vazia, o módulo fica **adormecido**: dá
-para criar e gerar páginas, mas não para publicar, e a aplicação comporta-se
-exatamente como antes em todos os hosts.
+Sem `LANDING_PAGES_DOMAIN` **e** sem `LANDING_CUSTOM_DOMAINS_ENABLED`, o módulo
+fica **adormecido**: dá para criar e gerar páginas, mas não para publicar, e a
+aplicação comporta-se exatamente como antes em todos os hosts.
 
 1. **Aplicar a migração** `supabase/migrations/20260918100000_landing_pages_credits_domains_v1.sql`.
    Sem ela o painel mostra um aviso e não deixa criar nada.
-2. **Registar um domínio separado** para as páginas e configurar o wildcard
-   `*.<domínio>` a apontar para a aplicação.
-3. **Definir as variáveis** (ver `.env.example`, secção "PÁGINAS DE CAPTURA").
+2. **Escolher um caminho de endereço** (ou os dois):
+   - `LANDING_CUSTOM_DOMAINS_ENABLED=true` — o cliente traz o domínio dele.
+     Cada domínio é registado um a um na hospedagem e **funciona em qualquer
+     plano**. É o caminho mais rápido para ter alguém no ar hoje.
+   - `LANDING_PAGES_DOMAIN=<domínio>` — endereço grátis `<slug>.<domínio>`.
+     Precisa de um domínio separado e de um **wildcard** `*.<domínio>`, que
+     exige plano pago na hospedagem.
+3. **Definir as restantes variáveis** (ver `.env.example`, secção
+   "PÁGINAS DE CAPTURA").
 
 ### Por que o domínio TEM de ser separado
 
