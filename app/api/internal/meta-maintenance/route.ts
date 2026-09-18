@@ -8,6 +8,7 @@ import {
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { verifyMetaSchedulerRequest } from "@/lib/server/meta-scheduler-auth";
 import { processAgentKnowledgeJobs } from "@/lib/server/agent-knowledge-processing";
+import { healthcheckFail, healthcheckSuccess } from "@/lib/server/healthchecks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -85,6 +86,7 @@ async function runMetaMaintenance(params: { runId: string; leaseToken: string })
       grants_checked: healthResult.value.grantsChecked,
       pages_discovered: healthResult.value.pagesDiscovered,
     });
+    await healthcheckSuccess("meta_connections");
   } else {
     console.error("[meta-maintenance] health_failed", {
       error:
@@ -92,6 +94,7 @@ async function runMetaMaintenance(params: { runId: string; leaseToken: string })
           ? healthResult.reason.message
           : "meta_health_maintenance_failed",
     });
+    await healthcheckFail("meta_connections");
   }
 
   if (knowledgeResult.status === "fulfilled") {
