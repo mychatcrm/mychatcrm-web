@@ -3,7 +3,11 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { attributionToJson, inferAttributionChannel } from "@/lib/landing/attribution";
-import { buildSubmissionDedupKey, validateLandingSubmission } from "@/lib/landing/form-schema";
+import {
+  buildSubmissionDedupKey,
+  canonicalLeadPhone,
+  validateLandingSubmission,
+} from "@/lib/landing/form-schema";
 import { loadRuleTeamAssignment } from "@/lib/server/meta-lead-team-assignment";
 import type { LandingAttribution } from "@/lib/landing/types";
 import type { PublishedLandingPage } from "@/lib/server/landing-pages-db";
@@ -160,7 +164,9 @@ async function upsertLandingLead(params: {
   now: Date;
 }): Promise<LeadUpsertOutcome> {
   const { sb, page } = params;
-  const phone = params.phoneDigits;
+  // Forma canónica (com 55): é assim que Meta e WhatsApp gravam. Sem isto a
+  // mesma pessoa vira dois leads e a atribuição fica no registo errado.
+  const phone = canonicalLeadPhone(params.phoneDigits);
   const occurredAt = params.now.toISOString();
 
   // A equipa vem da regra que admitiu o lead. Sem carimbo, o lead nasce órfão e

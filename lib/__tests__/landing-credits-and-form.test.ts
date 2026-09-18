@@ -22,6 +22,7 @@ import {
 } from "@/lib/credits/pricing";
 import {
   buildSubmissionDedupKey,
+  canonicalLeadPhone,
   defaultLandingFormFields,
   validateLandingSubmission,
 } from "@/lib/landing/form-schema";
@@ -166,6 +167,42 @@ describe("formulário público", () => {
     if (result.ok) {
       expect(Object.keys(result.values).sort()).toEqual(["name", "phone"]);
     }
+  });
+
+  it("grava o telefone na mesma forma que a Meta e o WhatsApp", () => {
+    /**
+     * Regressão cara: `checkWhatsapp` devolve dígitos locais e os outros dois
+     * caminhos de lead gravam com o 55. Gravar sem o prefixo criava uma SEGUNDA
+     * linha para a mesma pessoa — e a conversa do WhatsApp anexava-se ao outro
+     * lead, deixando a atribuição da campanha órfã.
+     */
+    const doMeta = (raw: string) => {
+      const d = raw.replace(/\D/g, "");
+      const s2 = d.startsWith("0") ? d.slice(1) : d;
+      return s2.length >= 10 && s2.length <= 11 && !s2.startsWith("55") ? `55${s2}` : s2;
+    };
+    const doWhatsApp = (jid: string) => (jid.split("@")[0] ?? "").replace(/\D/g, "");
+
+    const submission = validateLandingSubmission({
+      fields,
+      payload: { name: "Ana", phone: "(62) 99988-7766" },
+      consentGiven: true,
+    });
+    expect(submission.ok).toBe(true);
+    if (!submission.ok) return;
+
+    const daLanding = canonicalLeadPhone(submission.phoneDigits);
+    expect(daLanding).toBe(doMeta("62999887766"));
+    expect(daLanding).toBe(doWhatsApp("5562999887766@s.whatsapp.net"));
+    expect(daLanding).toBe("5562999887766");
+  });
+
+  it("não duplica o 55 nem perde número já internacional", () => {
+    expect(canonicalLeadPhone("5562999887766")).toBe("5562999887766");
+    expect(canonicalLeadPhone("62999887766")).toBe("5562999887766");
+    expect(canonicalLeadPhone("062999887766")).toBe("5562999887766");
+    expect(canonicalLeadPhone("(62) 99988-7766")).toBe("5562999887766");
+    expect(canonicalLeadPhone("")).toBe("");
   });
 
   it("junta o duplo clique e separa a visita de outro dia", () => {

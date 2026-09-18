@@ -209,6 +209,31 @@ export function validateLandingSubmission(params: {
 }
 
 /**
+ * Telefone na forma canónica do resto do sistema: com o `55` do país.
+ *
+ * `checkWhatsapp` devolve os dígitos LOCAIS (sem o 55) porque foi feito para
+ * validar o que a pessoa digita. Mas `leads.phone` é escrito por outros dois
+ * caminhos — Meta (`normalizePhone` em `meta-lead-processing.ts`) e WhatsApp
+ * (`normalizeWhatsAppPhone`, que vem do `remoteJid`) — e **os dois gravam com
+ * o 55**.
+ *
+ * Gravar sem o prefixo criaria uma segunda linha para a mesma pessoa: a chave
+ * única é `(tenant_id, phone)` e `62999887766` não colide com `5562999887766`.
+ * O estrago não é o registo duplicado, é o que vem depois — a conversa do
+ * WhatsApp anexa-se ao outro lead, e a atribuição da campanha fica órfã
+ * exatamente no fluxo que este módulo existe para medir.
+ */
+export function canonicalLeadPhone(localDigits: string): string {
+  const digits = String(localDigits ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  const stripped = digits.startsWith("0") ? digits.slice(1) : digits;
+  if (stripped.length >= 10 && stripped.length <= 11 && !stripped.startsWith("55")) {
+    return `55${stripped}`;
+  }
+  return stripped;
+}
+
+/**
  * Chave de deduplicação da submissão.
  *
  * Mesma página + mesmo telefone + mesma hora = uma submissão. A janela horária
