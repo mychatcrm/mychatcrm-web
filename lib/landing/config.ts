@@ -122,9 +122,16 @@ export function isDomainPurchaseEnabled(): boolean {
   return hostingerApiToken() !== null && envValue("LANDING_DOMAIN_PURCHASE_ENABLED") === "true";
 }
 
-/** Credenciais da Vercel para registar o domínio do cliente no projeto (SSL automático). */
+/**
+ * Credenciais da hospedagem para registar o domínio do cliente no projeto, que
+ * é o que faz o certificado sair sozinho.
+ *
+ * Aceita `VERCEL_TOKEN` além de `VERCEL_API_TOKEN` porque o projeto já usa o
+ * primeiro nome noutros sítios — obrigar a duplicar o mesmo segredo com dois
+ * nomes é uma armadilha de configuração, não uma medida de segurança.
+ */
 export function vercelDomainApi(): { token: string; projectId: string; teamId: string | null } | null {
-  const token = envValue("VERCEL_API_TOKEN");
+  const token = envValue("VERCEL_API_TOKEN") || envValue("VERCEL_TOKEN");
   const projectId = envValue("VERCEL_PROJECT_ID");
   if (!token || !projectId) return null;
   return { token, projectId, teamId: envValue("VERCEL_TEAM_ID") || null };
