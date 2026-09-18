@@ -102,6 +102,41 @@ export async function POST(request: Request, { params }: { params: { id: string 
   });
   if (!ok) return NextResponse.json({ error: "Não foi possível publicar." }, { status: 500 });
 
+  /**
+   * Reconferência depois de publicar.
+   *
+   * A contagem e a publicação não são uma transação: duas abas a clicar ao
+   * mesmo tempo leem ambas `publishedCount` antigo e passam ambas no limite.
+   * Em vez de uma transação para um caso raro, conta-se outra vez depois —
+   * quem excedeu volta atrás sozinho. O pior desfecho passa de "cliente com
+   * página a mais de graça, para sempre" para "publicação recusada com a
+   * mensagem certa".
+   */
+  if (page.status !== "published") {
+    const depois = await countPublishedLandingPages({ tenantId: session.tenantId, client: sb });
+    const entitlements = await listTenantBillingEntitlements({
+      tenantId: session.tenantId,
+      kind: "landing_page",
+    }).catch(() => []);
+    const allowance = resolveLandingPageAllowance({
+      plan: session.plan,
+      extraEntitlements: sumTenantEntitlementQuantity(entitlements, "landing_page"),
+      publishedCount: depois,
+    });
+
+    if (depois > allowance.cap) {
+      await unpublishLandingPage({ tenantId: session.tenantId, pageId: page.id, client: sb });
+      return NextResponse.json(
+        {
+          error: `O seu plano permite ${allowance.cap} página${allowance.cap === 1 ? "" : "s"} publicada${allowance.cap === 1 ? "" : "s"}. Despublique uma ou adicione páginas extra.`,
+          code: "PAGE_LIMIT_REACHED",
+          allowance,
+        },
+        { status: 402 },
+      );
+    }
+  }
+
   recordLandingAudit({
     tenantId: session.tenantId,
     action: "page_published",

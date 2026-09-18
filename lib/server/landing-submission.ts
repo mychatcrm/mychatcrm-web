@@ -265,11 +265,16 @@ async function upsertLandingLead(params: {
   return { leadId, status: leadId ? "created" : "failed", error: null };
 }
 
+/** Teto da amostra da divisão por canal — os totais não dependem dele. */
+const CHANNEL_SAMPLE = 1000;
+
 export type LandingSubmissionSummary = {
   total: number;
   last7Days: number;
   leadsCreated: number;
   byChannel: Record<string, number>;
+  /** Quantas submissões a divisão por canal olhou. Menor que `total` = amostra. */
+  channelSampleSize?: number;
 };
 
 export async function summarizeLandingSubmissions(params: {
@@ -278,45 +283,77 @@ export async function summarizeLandingSubmissions(params: {
   client?: SupabaseServiceClient;
 }): Promise<{ summary: LandingSubmissionSummary; available: boolean }> {
   const sb = params.client ?? createSupabaseServiceClient();
-  let query = sb
-    .from("landing_page_submissions")
-    .select("id, attribution, lead_status, created_at")
-    .eq("tenant_id", params.tenantId)
-    .order("created_at", { ascending: false })
-    .limit(1000);
-  if (params.pageId) query = query.eq("page_id", params.pageId);
+  const vazio: LandingSubmissionSummary = { total: 0, last7Days: 0, leadsCreated: 0, byChannel: {} };
 
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingTable(error)) {
-      return {
-        summary: { total: 0, last7Days: 0, leadsCreated: 0, byChannel: {} },
-        available: false,
-      };
+  /**
+   * Totais por `count` no banco, não contando linhas em JavaScript.
+   *
+   * A versão anterior lia 1000 linhas e contava na memória: a partir da
+   * milésima submissão os números paravam de crescer e o cliente concluía que
+   * a campanha tinha estagnado — justamente quando ela estava a ir melhor.
+   * `head: true` não traz linha nenhuma, só a contagem.
+   */
+  type Filtro = "todas" | "ultimos7" | "comLead";
+
+  const contar = async (filtro: Filtro) => {
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    let q = sb
+      .from("landing_page_submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", params.tenantId);
+    if (params.pageId) q = q.eq("page_id", params.pageId);
+    if (filtro === "ultimos7") q = q.gte("created_at", cutoff);
+    if (filtro === "comLead") q = q.in("lead_status", ["created", "updated"]);
+
+    const { count, error } = await q;
+    if (error) {
+      if (!isMissingTable(error)) console.error("[landing-submission] contagem falhou", error);
+      return { count: 0, missing: isMissingTable(error) };
     }
-    console.error("[landing-submission] resumo falhou", error);
-    return { summary: { total: 0, last7Days: 0, leadsCreated: 0, byChannel: {} }, available: false };
-  }
-
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const summary: LandingSubmissionSummary = {
-    total: 0,
-    last7Days: 0,
-    leadsCreated: 0,
-    byChannel: {},
+    return { count: count ?? 0, missing: false };
   };
 
-  for (const raw of data ?? []) {
-    const row = raw as Record<string, unknown>;
-    summary.total += 1;
-    if (new Date(String(row.created_at ?? "")).getTime() >= cutoff) summary.last7Days += 1;
-    if (row.lead_status === "created" || row.lead_status === "updated") summary.leadsCreated += 1;
+  const [total, recentes, comLead] = await Promise.all([
+    contar("todas"),
+    contar("ultimos7"),
+    contar("comLead"),
+  ]);
 
-    const channel = inferAttributionChannel(
-      (row.attribution ?? {}) as LandingAttribution,
-    );
-    summary.byChannel[channel] = (summary.byChannel[channel] ?? 0) + 1;
+  if (total.missing) return { summary: vazio, available: false };
+
+  /**
+   * A divisão por canal continua a ler linhas: a origem vive num `jsonb` e não
+   * há índice para agrupar. É a única parte aproximada, e o tamanho da amostra
+   * vai na resposta para a interface poder dizer isso em vez de fingir.
+   */
+  let amostra = sb
+    .from("landing_page_submissions")
+    .select("attribution")
+    .eq("tenant_id", params.tenantId)
+    .order("created_at", { ascending: false })
+    .limit(CHANNEL_SAMPLE);
+  if (params.pageId) amostra = amostra.eq("page_id", params.pageId);
+
+  const { data, error } = await amostra;
+  const byChannel: Record<string, number> = {};
+  if (error) {
+    console.error("[landing-submission] amostra por canal falhou", error);
+  } else {
+    for (const raw of data ?? []) {
+      const row = raw as Record<string, unknown>;
+      const canal = inferAttributionChannel((row.attribution ?? {}) as LandingAttribution);
+      byChannel[canal] = (byChannel[canal] ?? 0) + 1;
+    }
   }
 
-  return { summary, available: true };
+  return {
+    summary: {
+      total: total.count,
+      last7Days: recentes.count,
+      leadsCreated: comLead.count,
+      byChannel,
+      channelSampleSize: Math.min(total.count, CHANNEL_SAMPLE),
+    },
+    available: true,
+  };
 }
