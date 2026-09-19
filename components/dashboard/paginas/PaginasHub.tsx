@@ -17,6 +17,7 @@ type Wallet = { balance: number; lifetimeGranted: number; lifetimeSpent: number;
 type PageWithUrl = LandingPageRecord & { publicUrl: string | null };
 
 type ListPayload = {
+  platformOwner: boolean;
   configured: boolean;
   platformSubdomainEnabled: boolean;
   pagesDomain: string | null;
@@ -100,10 +101,22 @@ export function PaginasHub({ session }: { session: ClientSession }) {
   if (!data) return null;
 
   if (!data.available) {
-    return (
+    /**
+     * Duas mensagens para o mesmo estado, e a diferença importa.
+     *
+     * Detalhe de infraestrutura é nosso, não do cliente: um cliente pagante a
+     * ler "aplique a migração no Supabase" no painel dele não aprende nada,
+     * não pode agir, e fica com a impressão de produto inacabado.
+     */
+    return data.platformOwner ? (
       <SetupNotice
         title="Módulo ainda não migrado"
         body="As tabelas das páginas de captura ainda não existem neste banco. Aplique a migração 20260918100000_landing_pages_credits_domains_v1.sql no Supabase e recarregue."
+      />
+    ) : (
+      <SetupNotice
+        title="Estamos a preparar este módulo"
+        body="As Páginas de Captura ainda não estão disponíveis na sua conta. Avisamos assim que estiverem — não é preciso fazer nada."
       />
     );
   }
@@ -125,10 +138,17 @@ export function PaginasHub({ session }: { session: ClientSession }) {
   return (
     <div className="flex flex-col gap-5">
       {!data.configured ? (
-        <SetupNotice
-          title="Endereço por configurar"
-          body="Defina LANDING_PAGES_DOMAIN (endereço grátis, precisa de wildcard) ou LANDING_CUSTOM_DOMAINS_ENABLED=true (domínio do próprio cliente, funciona em qualquer plano). Sem um dos dois, dá para criar e gerar, mas não para colocar no ar."
-        />
+        data.platformOwner ? (
+          <SetupNotice
+            title="Endereço por configurar"
+            body="Defina LANDING_PAGES_DOMAIN (endereço grátis, precisa de wildcard) ou LANDING_CUSTOM_DOMAINS_ENABLED=true (domínio do próprio cliente, funciona em qualquer plano). Sem um dos dois, dá para criar e gerar, mas não para colocar no ar."
+          />
+        ) : (
+          <SetupNotice
+            title="Publicação ainda indisponível"
+            body="Pode criar e gerar a sua página desde já. A publicação é libertada em breve — avisamos quando estiver pronta."
+          />
+        )
       ) : !data.platformSubdomainEnabled ? (
         <SetupNotice
           title="Só com domínio próprio"
