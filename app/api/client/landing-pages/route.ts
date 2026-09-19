@@ -14,6 +14,7 @@ import {
   landingWelcomeCredits,
 } from "@/lib/landing/config";
 import { slugifyLandingName, validateLandingSlug } from "@/lib/landing/slug";
+import { PLATFORM_OWNER_TENANT_ID } from "@/lib/tenant-session-defaults";
 import { LANDING_TEMPLATES } from "@/lib/landing/templates";
 import { resolveLandingPageAllowance } from "@/lib/credits/pricing";
 import { ensureWelcomeCredits, getCreditWallet } from "@/lib/server/credits";
@@ -77,6 +78,12 @@ export async function GET() {
 
   return NextResponse.json(
     {
+      /**
+       * Só a conta titular vê detalhe de infraestrutura. Um cliente pagante a
+       * ler "aplique a migração no Supabase" no painel dele não aprende nada,
+       * não pode agir, e fica com a impressão de produto inacabado.
+       */
+      platformOwner: session.tenantId === PLATFORM_OWNER_TENANT_ID,
       configured: isLandingModuleConfigured(),
       /** Endereço grátis só existe com o wildcard; domínio próprio funciona sem ele. */
       platformSubdomainEnabled: isLandingPlatformSubdomainEnabled(),
